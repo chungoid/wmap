@@ -181,51 +181,156 @@ def list_queries():
         "19": {
             "description": "Packet Size Analysis",
             "query": """
-                SELECT source_mac, AVG(packet_len) AS avg_size, MAX(packet_len) AS max_size, MIN(packet_len) AS min_size
-                FROM packets
-                WHERE packet_len IS NOT NULL
-                GROUP BY source_mac
-                ORDER BY avg_size DESC
-                LIMIT 10;
-            """
+                    SELECT source_mac, AVG(packet_len) AS avg_size, MAX(packet_len) AS max_size, MIN(packet_len) AS min_size
+                    FROM packets
+                    WHERE packet_len IS NOT NULL
+                    GROUP BY source_mac
+                    ORDER BY avg_size DESC
+                    LIMIT 10;
+                """
         },
         "20": {
             "description": "Open Networks with High Traffic",
             "query": """
-                SELECT ssid, source_mac AS ap_mac, COUNT(*) AS packet_count
-                FROM beacons
-                JOIN packets ON beacons.id = packets.id
-                WHERE encryption IS NULL OR encryption = 'Open'
-                GROUP BY ssid, source_mac
-                ORDER BY packet_count DESC
-                LIMIT 10;
-            """
+                    SELECT ssid, source_mac AS ap_mac, COUNT(*) AS packet_count
+                    FROM beacons
+                    JOIN packets ON beacons.id = packets.id
+                    WHERE encryption IS NULL OR encryption = 'Open'
+                    GROUP BY ssid, source_mac
+                    ORDER BY packet_count DESC
+                    LIMIT 10;
+                """
+        },
+        "21": {
+            "description": "Access Points with Signal Fluctuations",
+            "query": """
+                    SELECT source_mac AS ap_mac, MAX(signal) - MIN(signal) AS signal_fluctuation
+                    FROM packets
+                    WHERE signal IS NOT NULL
+                    GROUP BY source_mac
+                    HAVING signal_fluctuation > 20
+                    ORDER BY signal_fluctuation DESC;
+                """
+        },
+        "22": {
+            "description": "Devices with Highest Transmission Frequency",
+            "query": """
+                    SELECT source_mac, COUNT(*) AS packet_count
+                    FROM packets
+                    WHERE freq IS NOT NULL
+                    GROUP BY source_mac
+                    ORDER BY packet_count DESC
+                    LIMIT 10;
+                """
+        },
+        "23": {
+            "description": "SSID Activity Timeline",
+            "query": """
+                    SELECT ssid, strftime('%Y-%m-%d %H:%M', ts_sec, 'unixepoch') AS time_slot, COUNT(*) AS activity_count
+                    FROM beacons
+                    JOIN packets ON beacons.id = packets.id
+                    GROUP BY ssid, time_slot
+                    ORDER BY ssid, time_slot;
+                """
+        },
+        "24": {
+            "description": "Deauthentication Events by Time",
+            "query": """
+                    SELECT strftime('%Y-%m-%d %H:%M', ts_sec, 'unixepoch') AS time_slot, COUNT(*) AS deauth_count
+                    FROM deauth_frames
+                    JOIN packets ON deauth_frames.id = packets.id
+                    GROUP BY time_slot
+                    ORDER BY time_slot;
+                """
+        },
+        "25": {
+            "description": "Most Common Channels in Use",
+            "query": """
+                    SELECT channel, COUNT(*) AS usage_count
+                    FROM packets
+                    WHERE channel IS NOT NULL
+                    GROUP BY channel
+                    ORDER BY usage_count DESC
+                    LIMIT 10;
+                """
+        },
+        "26": {
+            "description": "APs with the Most Clients Over Time",
+            "query": """
+                    SELECT source_mac AS ap_mac, strftime('%Y-%m-%d %H:%M', ts_sec, 'unixepoch') AS time_slot, COUNT(DISTINCT dest_mac) AS client_count
+                    FROM packets
+                    WHERE dest_mac IS NOT NULL
+                    GROUP BY ap_mac, time_slot
+                    ORDER BY client_count DESC, time_slot;
+                """
+        },
+        "27": {
+            "description": "High Data Rate Devices",
+            "query": """
+                    SELECT source_mac, MAX(datarate) AS max_datarate
+                    FROM packets
+                    WHERE datarate IS NOT NULL
+                    GROUP BY source_mac
+                    ORDER BY max_datarate DESC
+                    LIMIT 10;
+                """
+        },
+        "28": {
+            "description": "Probes Sent to Specific SSIDs",
+            "query": """
+                    SELECT ssid, source_mac, COUNT(*) AS request_count
+                    FROM probes
+                    GROUP BY ssid, source_mac
+                    ORDER BY request_count DESC
+                    LIMIT 10;
+                """
+        },
+        "29": {
+            "description": "Top Devices with Error Packets",
+            "query": """
+                    SELECT source_mac, COUNT(*) AS error_count
+                    FROM packets
+                    WHERE error IS NOT NULL
+                    GROUP BY source_mac
+                    ORDER BY error_count DESC
+                    LIMIT 10;
+                """
+        },
+        "30": {
+            "description": "APs with Unusually High Traffic",
+            "query": """
+                    SELECT source_mac AS ap_mac, COUNT(*) AS packet_count
+                    FROM packets
+                    GROUP BY source_mac
+                    HAVING packet_count > 1000
+                    ORDER BY packet_count DESC;
+                """
         }
     }
 
-def run_queries(db_path, output_path):
-    """Run all queries against the database and save results to a JSON file."""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    queries = list_queries()
-    results = {}
+    def run_queries(db_path, output_path):
+        """Run all queries against the database and save results to a JSON file."""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        queries = list_queries()
+        results = {}
 
-    for key, value in queries.items():
-        query_result = execute_query(cursor, value["query"], value["description"])
-        results[key] = query_result
+        for key, value in queries.items():
+            query_result = execute_query(cursor, value["query"], value["description"])
+            results[key] = query_result
 
-    conn.close()
+        conn.close()
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, "w") as outfile:
-        json.dump(results, outfile, indent=4)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w") as outfile:
+            json.dump(results, outfile, indent=4)
 
-    print(f"Results saved to {output_path}")
+        print(f"Results saved to {output_path}")
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run predefined queries on the database.")
-    parser.add_argument("db_path", type=str, help="Path to the SQLite database file.")
-    parser.add_argument("output_path", type=str, help="Path to save the query results as JSON.")
-    args = parser.parse_args()
+    if __name__ == "__main__":
+        parser = argparse.ArgumentParser(description="Run predefined queries on the database.")
+        parser.add_argument("db_path", type=str, help="Path to the SQLite database file.")
+        parser.add_argument("output_path", type=str, help="Path to save the query results as JSON.")
+        args = parser.parse_args()
 
-    run_queries(args.db_path, args.output_path)
+        run_queries(args.db_path, args.output_path)
