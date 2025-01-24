@@ -3,7 +3,7 @@ import json
 import subprocess
 import logging
 
-# Configure logging
+
 LOG_FILE = "tshark_parser.log"
 logging.basicConfig(
     filename=LOG_FILE,
@@ -17,7 +17,7 @@ def parse_tshark_to_db(pcap_file, db_path="wmap.db"):
     cursor = conn.cursor()
 
     try:
-        # Run TShark and fetch JSON output
+
         logging.info(f"Running TShark on {pcap_file}...")
         result = subprocess.run([
             "tshark", "-r", pcap_file, "-T", "json",
@@ -41,7 +41,7 @@ def parse_tshark_to_db(pcap_file, db_path="wmap.db"):
 
     for packet in packets:
         try:
-            # Extract fields
+
             fields = packet.get("_source", {}).get("layers", {})
             ts_sec = fields.get("frame.time_epoch", [0])[0] if isinstance(fields.get("frame.time_epoch"), list) else fields.get("frame.time_epoch", 0)
             ts_sec = int(float(ts_sec))  # Convert to integer seconds
@@ -53,7 +53,7 @@ def parse_tshark_to_db(pcap_file, db_path="wmap.db"):
             ssid = fields.get("wlan.ssid", [None])[0] if isinstance(fields.get("wlan.ssid"), list) else fields.get("wlan.ssid")
             packet_type = fields.get("wlan.fc.type_subtype", [None])[0] if isinstance(fields.get("wlan.fc.type_subtype"), list) else fields.get("wlan.fc.type_subtype")
 
-            # Insert into packets table
+            # packets table
             cursor.execute("""
             INSERT INTO packets (
                 ts_sec, ts_usec, phyname, source_mac, dest_mac, trans_mac,
@@ -61,14 +61,14 @@ def parse_tshark_to_db(pcap_file, db_path="wmap.db"):
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (ts_sec, 0, "802.11", source_mac, dest_mac, None, None, None, None, signal, "802.11", None, None))
 
-            # Insert into beacons table if applicable
+            # beacons table
             if packet_type == "0x08":  # Beacon frame
                 cursor.execute("""
                 INSERT INTO beacons (id, ssid, encryption, capabilities, beacon_interval)
                 VALUES (NULL, ?, ?, ?, ?)
                 """, (ssid, "WPA2-PSK", "HT20", 100))
 
-            # Insert into probes table if applicable
+            # probes table
             if packet_type == "0x04":  # Probe request
                 cursor.execute("""
                 INSERT INTO probes (id, ssid, is_response)

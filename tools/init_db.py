@@ -1,9 +1,8 @@
-from config.config import CONFIG, DEFAULT_DB_PATH
 import sqlite3
 
-def initialize_database(db_path="wmap.db"):
+def initialize_database(dbpath):
     """Initialize the SQLite database with the required schema."""
-    conn = sqlite3.connect(DEFAULT_DB_PATH)
+    conn = sqlite3.connect(dbpath)
     cursor = conn.cursor()
 
     # Main Packets Table
@@ -71,7 +70,4 @@ def initialize_database(db_path="wmap.db"):
 
     conn.commit()
     conn.close()
-    print(f"Database initialized successfully at '{DEFAULT_DB_PATH}'.")
-
-if __name__ == "__main__":
-    initialize_database()
+    print(f"Database initialized successfully at '{dbpath}'.")

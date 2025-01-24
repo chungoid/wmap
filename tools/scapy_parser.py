@@ -1,11 +1,13 @@
 import sqlite3
-import argparse
 import logging
+import os
 from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11ProbeReq, Dot11Deauth
 from scapy.utils import PcapReader
+from config.config import CONFIG, LOG_FILES, DEFAULT_DB_PATH
 
-# Configure logging
-LOG_FILE = "scapy_parser.log"
+LOG_FILE = LOG_FILES["scapy_parser"]
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.DEBUG,
@@ -13,8 +15,16 @@ logging.basicConfig(
 )
 
 
-def parse_scapy_to_db(pcap_file, db_path="wmap.db"):
+def parse_scapy_to_db(pcap_file, db_path=DEFAULT_DB_PATH):
     """Parse a pcap file using Scapy in chunks and populate the database."""
+    if not os.path.exists(pcap_file):
+        logging.error(f"PCAP file '{pcap_file}' not found.")
+        raise FileNotFoundError(f"PCAP file '{pcap_file}' does not exist.")
+
+    if not os.path.exists(db_path):
+        logging.error(f"Database file '{db_path}' not found.")
+        raise FileNotFoundError(f"Database file '{db_path}' does not exist.")
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -23,7 +33,7 @@ def parse_scapy_to_db(pcap_file, db_path="wmap.db"):
         with PcapReader(pcap_file) as packets:
             for idx, packet in enumerate(packets):
                 try:
-                    # Common metadata
+                    # metadata
                     ts_sec = int(packet.time)
                     ts_usec = int((packet.time - ts_sec) * 1_000_000)
                     source_mac = packet.addr2 if packet.haslayer(Dot11) else None
@@ -31,11 +41,11 @@ def parse_scapy_to_db(pcap_file, db_path="wmap.db"):
                     trans_mac = packet.addr3 if packet.haslayer(Dot11) else None
                     packet_len = len(packet)
 
-                    # Radiotap signal data (if present)
+                    # radiotap
                     signal = getattr(packet, 'dBm_AntSignal', None)
                     signal = int(signal) if signal is not None else None
 
-                    # Default values for specific layers
+                    # default
                     phyname = "802.11"
                     freq = getattr(packet, 'ChannelFrequency', None)
                     channel = None
@@ -43,7 +53,7 @@ def parse_scapy_to_db(pcap_file, db_path="wmap.db"):
                     tags = None
                     datarate = None
 
-                    # Layer-specific processing
+                    # layer specific
                     if packet.haslayer(Dot11Beacon):
                         ssid = packet.info.decode("utf-8") if getattr(packet, "info", None) else "Hidden"
                         cursor.execute("""
@@ -65,7 +75,7 @@ def parse_scapy_to_db(pcap_file, db_path="wmap.db"):
                         VALUES (NULL, ?)
                         """, (reason_code,))
 
-                    # Insert into the packets table
+                    # packets table in db
                     cursor.execute("""
                     INSERT INTO packets (
                         ts_sec, ts_usec, phyname, source_mac, dest_mac, trans_mac,
@@ -82,23 +92,14 @@ def parse_scapy_to_db(pcap_file, db_path="wmap.db"):
                 except Exception as e:
                     logging.error(f"Error processing packet {idx + 1}: {e}")
 
-                # Commit every 100 packets to avoid locking
                 if (idx + 1) % 100 == 0:
                     conn.commit()
                     logging.info(f"Committed 100 packets to the database (processed {idx + 1} packets so far).")
 
     except Exception as e:
         logging.error(f"Error reading pcap file '{pcap_file}': {e}")
+        raise
     finally:
         conn.commit()
         conn.close()
         logging.info(f"Parsing completed for {pcap_file}.")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Parse a pcap file and load data into the database.")
-    parser.add_argument("pcap_file", type=str, help="Path to the pcap or pcapng file.")
-    parser.add_argument("-d", "--db_path", type=str, default="wmap.db", help="Path to the SQLite database.")
-    args = parser.parse_args()
-
-    parse_scapy_to_db(args.pcap_file, args.db_path)
