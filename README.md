@@ -35,18 +35,15 @@ To capture packets and parse them into the database:
 
 WPA-SEC Integration & Capture File Handling:
 ```
-./wmap.py -u # upload all captures from wmap/captures/ 
+./wmap.py -u # upload all captures (default: wmap/capture/)
 
-./wmap.py -u /path/to/capture.pcap # upload a specific capture
+./wmap.py -u /path/to/capture.pcap 
 
-./wmap .py -d # download wpa-sec pot to wmap/captures/ 
+./wmap .py -d # download wpa-sec (default: wmap/capture/)
 
-./wmap.py -d /path/to/save/potfile.pot
-```
-To upload all unmarked PCAP files in the capture directory:
+./wmap.py -d /path/to/save/potfile.pot 
 ```
 
-```
 ## Features
 
     Supports multiple capture tools: hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap.
