@@ -64,6 +64,7 @@ def parse_capture_file(parser, output, db_path):
         parse_tshark_to_db(output, db_path)
     print("Parsing completed successfully.")
 
+
 def download_potfile(output_file):
     """Download the potfile from WPA-SEC."""
     key = CONFIG.get("wpa_sec_key")
@@ -85,6 +86,7 @@ def download_potfile(output_file):
         print(f"Potfile downloaded successfully and saved to {output_file}.")
     except requests.RequestException as e:
         print(f"Error downloading potfile: {e}")
+
 
 def upload_pcap(pcap_file):
     """Upload a PCAP file to WPA-SEC."""
@@ -120,7 +122,8 @@ def main():
                         help="Parser to use for processing the capture (default: scapy).")
     parser.add_argument("--args", nargs=argparse.REMAINDER, help="Additional arguments for the capture tool.")
     parser.add_argument("-u", "--upload", type=str, help="Upload a PCAP file to WPA-SEC.")
-    parser.add_argument("-d", "--download", type=str, help="Download potfile from WPA-SEC to the specified path.")
+    parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
+                        help="Download potfile from WPA-SEC (default path if no path provided).")
 
     args = parser.parse_args()
 
@@ -129,20 +132,21 @@ def main():
     initialize_database_if_needed(db_path)
     prepare_output_directory(args.output)
 
-    # handle wpa-sec.stanev.org args
+    # Handle WPA-SEC arguments
     if args.upload:
         upload_pcap(args.upload)
-    elif args.download:
-        download_potfile(args.download)
-    else:
-        print("No upload or download action specified. Use -u or -d options.")
+        return  # Skip other actions if upload is performed
 
-    # run capture
+    if args.download:
+        download_potfile(args.download)
+        return  # Skip other actions if download is performed
+
+    # Run packet capture
     additional_args = args.args if args.args else []
     additional_args = determine_tool_args(args.tool, args.output, additional_args)
     capture_packets(args.tool, args.interface, args.output, additional_args)
 
-    # parse packets into the database
+    # Parse packets into the database
     parse_capture_file(args.parser, args.output, db_path)
 
     print("Capture and parsing completed successfully.")
