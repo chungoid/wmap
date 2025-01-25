@@ -19,30 +19,28 @@ pip install -r requirements.txt
 
 ## Usage
 ```
-usage: wmap.py [-h] [-t {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}] [-o OUTPUT] [--parser {scapy,tshark}] [--args ...] [-u [UPLOAD]] [-d [DOWNLOAD]]
-               [--set-key SET_KEY] [--no-webserver]
-               [interface]
+usage: wmap.py [-h] [-t {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}] [--parser {scapy,tshark}] [-u [UPLOAD]] [-d [DOWNLOAD]] [--set-key SET_KEY] [--no-webserver] [--parse-existing PARSE_EXISTING] ...
 
 Wi-Fi packet capture and parsing tool.
 
 positional arguments:
-  interface             Wireless interface to use (e.g., wlan0mon).
+  tool_args             All additional arguments for the tool (e.g., interface, output options).
 
 options:
   -h, --help            show this help message and exit
   -t {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}, --tool {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}
                         Capture tool to use (e.g., hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap).
-  -o OUTPUT, --output OUTPUT
-                        Output file or directory for the capture (if required).
   --parser {scapy,tshark}
                         Parser to use for processing the capture (default: scapy).
-  --args ...            Additional arguments for the capture tool.
   -u [UPLOAD], --upload [UPLOAD]
                         Upload a specific PCAP file or all unmarked files in the capture directory.
   -d [DOWNLOAD], --download [DOWNLOAD]
                         Download potfile from WPA-SEC (default path if no path provided).
   --set-key SET_KEY     Set the WPA-SEC key in the database.
   --no-webserver        Disable web server and run CLI-only operations.
+  --parse-existing PARSE_EXISTING
+                        Parse an existing capture file (e.g., /path/to/file.pcap).
+
 
 ```
 
