@@ -41,14 +41,13 @@ def main():
     ensure_directories_and_database()
 
     parser = argparse.ArgumentParser(description="Wi-Fi packet capture and parsing tool.")
-    parser.add_argument("interface", type=str, nargs="?", help="Wireless interface to use (e.g., wlan0mon).")
-    parser.add_argument("-t", "--tool", type=str,
+    parser.add_argument("-t", "--tool", type=str, required=True,
                         choices=["hcxdumptool", "tshark", "airodump-ng", "tcpdump", "dumpcap"],
                         help="Capture tool to use (e.g., hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap).")
-    parser.add_argument("-o", "--output", type=str, help="Output file or directory for the capture (if required).")
+    parser.add_argument("--args", nargs=argparse.REMAINDER, required=True,
+                        help="Additional arguments for the capture tool, including interface and output.")
     parser.add_argument("--parser", type=str, choices=["scapy", "tshark"], default="scapy",
                         help="Parser to use for processing the capture (default: scapy).")
-    parser.add_argument("--args", nargs=argparse.REMAINDER, help="Additional arguments for the capture tool.")
     parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"],
                         help="Upload a specific PCAP file or all unmarked files in the capture directory.")
     parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
@@ -64,28 +63,34 @@ def main():
     if handle_wpa_sec_actions(args, db_path):
         return
 
-    # Validate capture-related arguments
-    if not args.no_webserver:
-        validate_capture_arguments(args, parser)
+    # Build capture command and ensure output redirection to `capture/`
+    additional_args = args.args
+    capture_dir = CONFIG["capture_dir"]
+    os.makedirs(capture_dir, exist_ok=True)
 
-    # Prepare output directory if needed
-    if args.output:
-        prepare_output_directory(args.output)
+    # Check if the tool specifies an output argument and rewrite it to the capture directory
+    output_path = None
+    for i, arg in enumerate(additional_args):
+        if arg in ["-o", "--write", "-w"]:  # Arguments that specify output
+            if i + 1 < len(additional_args):
+                original_output = additional_args[i + 1]
+                filename = os.path.basename(original_output)
+                output_path = os.path.join(capture_dir, filename)
+                additional_args[i + 1] = output_path
 
-    # Capture and parse packets if web server is not disabled
-    if not args.no_webserver:
-        additional_args = args.args if args.args else []
-        if args.output and args.tool in ["tshark", "airodump-ng", "tcpdump", "dumpcap"]:
-            additional_args = determine_tool_args(args.tool, args.output, additional_args)
+    # Validate that output was provided if required by the tool
+    if not output_path and args.tool in ["tshark", "airodump-ng", "tcpdump", "dumpcap"]:
+        print(f"Error: The tool '{args.tool}' requires an output file specified in its arguments.")
+        return
 
-        # Run packet capture
-        capture_packets(args.tool, args.interface, additional_args)
+    # Run packet capture
+    print(f"Starting capture with {args.tool}...")
+    capture_packets(args.tool, additional_args)
 
-        # Parse packets into the database if --output is specified
-        if args.output:
-            parse_capture_file(args.parser, args.output, db_path)
-
-        print("Capture and parsing completed successfully.")
+    # Parse packets into the database
+    if output_path:
+        print(f"Parsing capture file '{output_path}' into the database...")
+        parse_capture_file(args.parser, output_path, db_path)
 
     # Launch Flask web server if not disabled
     if not args.no_webserver:
