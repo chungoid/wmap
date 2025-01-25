@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
 import os
 import argparse
-from config.config import CONFIG, ensure_directories, DEFAULT_DB_PATH
+from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH
 from tools.init_db import initialize_database
 from utils.capture import prepare_output_directory, capture_packets, determine_tool_args
 from utils.parsing import parse_capture_file
 from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps, set_wpasec_key
-
-
-def initialize_database_if_needed(db_path):
-    """Ensure the database is initialized."""
-    if not os.path.exists(db_path):
-        print(f"Initializing database at {db_path}...")
-        initialize_database(db_path)
-    else:
-        print(f"Database already exists at {db_path}.")
 
 
 def handle_wpa_sec_actions(args, db_path):
@@ -47,7 +38,7 @@ def validate_capture_arguments(args, parser):
 
 
 def main():
-    ensure_directories()
+    ensure_directories_and_database()
 
     parser = argparse.ArgumentParser(description="Wi-Fi packet capture and parsing tool.")
     parser.add_argument("interface", type=str, nargs="?", help="Wireless interface to use (e.g., wlan0mon).")
@@ -68,7 +59,6 @@ def main():
     args = parser.parse_args()
 
     db_path = DEFAULT_DB_PATH
-    initialize_database_if_needed(db_path)
 
     # Handle WPA-SEC actions
     if handle_wpa_sec_actions(args, db_path):
