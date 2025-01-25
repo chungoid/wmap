@@ -30,10 +30,11 @@ TOOL_PATHS = {
     "dumpcap": "/usr/bin/dumpcap",
 }
 
+
 def main():
-    if len(sys.argv) < 2:
-        logging.error("Usage: wrapper.py <tool> [args...]")
-        print("Usage: wrapper.py <tool> [args...]")
+    if len(sys.argv) < 3:  # Expect at least the tool and one argument
+        logging.error("Usage: wrapper.py <tool> -- [args...]")
+        print("Usage: wrapper.py <tool> -- [args...]")
         print("Supported tools: hcxdumptool, airodump-ng, tshark, tcpdump, dumpcap")
         sys.exit(1)
 
@@ -44,7 +45,14 @@ def main():
         sys.exit(1)
 
     original_tool_path = TOOL_PATHS[tool]
-    args = sys.argv[2:]  # Remaining arguments after the tool name
+    if "--" not in sys.argv:
+        logging.error("Missing '--' separator. Ensure tool-specific arguments are after '--'.")
+        print("Error: Missing '--' separator. Ensure tool-specific arguments are after '--'.")
+        sys.exit(1)
+
+    # Extract arguments after the '--' separator
+    args_index = sys.argv.index("--") + 1
+    args = sys.argv[args_index:]
     redirected_args = []
     i = 0
 
@@ -75,6 +83,7 @@ def main():
     # Change working directory to the capture directory
     try:
         os.makedirs(capture_dir, exist_ok=True)
+
         result = subprocess.run(command, check=True, capture_output=True, text=True, cwd=capture_dir)
         logging.info(f"Capture with {tool} completed successfully.")
         print(f"Capture with {tool} completed successfully.")
