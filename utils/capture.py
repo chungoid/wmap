@@ -23,15 +23,19 @@ def determine_tool_args(tool, output, additional_args):
     return additional_args
 
 
-def capture_packets(tool, interface, output, additional_args):
+def capture_packets(tool, interface, additional_args):
     """Run the specified capture tool."""
     print(f"Starting capture with {tool} on {interface}...")
     command = [tool, "-i", interface] + additional_args
     try:
-        subprocess.run(command, check=True)
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
         print(f"Capture completed with {tool}.")
+        if result.stdout:
+            print(result.stdout)
+        if result.stderr:
+            print(f"Warnings or errors:\n{result.stderr}")
     except subprocess.CalledProcessError as e:
         print(f"Error during capture with {tool}: {e}")
         if e.stderr:
-            print(f"Tool output:\n{e.stderr.decode('utf-8')}")
+            print(f"Tool output:\n{e.stderr}")
         exit(1)

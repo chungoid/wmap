@@ -47,7 +47,7 @@ def main():
     parser.add_argument("-t", "--tool", type=str,
                         choices=["hcxdumptool", "tshark", "airodump-ng", "tcpdump", "dumpcap"],
                         help="Capture tool to use (e.g., hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap).")
-    parser.add_argument("-o", "--output", type=str, help="Output file or directory for the capture.")
+    parser.add_argument("-o", "--output", type=str, help="Output file or directory for the capture (if required).")
     parser.add_argument("--parser", type=str, choices=["scapy", "tshark"], default="scapy",
                         help="Parser to use for processing the capture (default: scapy).")
     parser.add_argument("--args", nargs=argparse.REMAINDER, help="Additional arguments for the capture tool.")
@@ -63,24 +63,30 @@ def main():
     if handle_wpa_sec_actions(args):
         return
 
-    # Validate capture-related arguments
-    if not args.no_webserver:
-        if not args.interface or not args.tool or not args.output:
-            parser.error("interface, -t/--tool, and -o/--output are required for capture and parsing.")
-
-    # Initialize database and prepare output directory
+    # Initialize database
     db_path = DEFAULT_DB_PATH
     initialize_database_if_needed(db_path)
-    prepare_output_directory(args.output)
 
     if not args.no_webserver:
-        # Run packet capture
-        additional_args = args.args if args.args else []
-        additional_args = determine_tool_args(args.tool, args.output, additional_args)
-        capture_packets(args.tool, args.interface, args.output, additional_args)
+        # Validate capture-related arguments
+        if not args.interface or not args.tool:
+            parser.error("interface and -t/--tool are required for capture.")
 
-        # Parse packets into the database
-        parse_capture_file(args.parser, args.output, db_path)
+        # Prepare output directory if --output is specified
+        if args.output:
+            prepare_output_directory(args.output)
+
+        # Build additional arguments
+        additional_args = args.args if args.args else []
+        if args.output and args.tool in ["tshark", "airodump-ng", "tcpdump", "dumpcap"]:
+            additional_args = determine_tool_args(args.tool, args.output, additional_args)
+
+        # Run packet capture
+        capture_packets(args.tool, args.interface, additional_args)
+
+        # Parse packets into the database if --output is specified
+        if args.output:
+            parse_capture_file(args.parser, args.output, db_path)
 
         print("Capture and parsing completed successfully.")
 

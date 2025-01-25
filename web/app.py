@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from web.utils import load_queries, get_query_by_id
 import sqlite3
 import os

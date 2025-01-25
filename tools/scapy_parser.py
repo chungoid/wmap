@@ -3,7 +3,7 @@ import logging
 import os
 from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11ProbeReq, Dot11Deauth
 from scapy.utils import PcapReader
-from config.config import CONFIG, LOG_FILES, DEFAULT_DB_PATH
+from config.config import LOG_FILES, DEFAULT_DB_PATH
 
 LOG_FILE = LOG_FILES["scapy_parser"]
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
