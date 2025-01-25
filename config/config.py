@@ -24,7 +24,7 @@ WEB_SERVER = {
 # Default database path
 DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.db")
 
-# Log file paths
+# Centralized log paths for all modules
 LOG_FILES = {
     "scapy_parser": os.path.join(CONFIG["log_dir"], "scapy_parser.log"),
     "tshark_parser": os.path.join(CONFIG["log_dir"], "tshark_parser.log"),
@@ -32,9 +32,10 @@ LOG_FILES = {
     "wrapper": os.path.join(CONFIG["log_dir"], "wrapper.log"),
 }
 
-
 def ensure_directories_and_database():
-    """Ensure necessary directories and database are initialized."""
+    """
+    Ensure necessary directories are initialized and the database is created.
+    """
     try:
         print("Checking directories...")
         for key, dir_path in CONFIG.items():

@@ -68,7 +68,6 @@ def parse_previous_captures(db_path):
 def main():
     try:
         logging.info("Starting WMAP...")
-        # Ensure required directories and database are initialized
         print("Initializing directories and database...")
         ensure_directories_and_database()
         print("Initialization completed.")
@@ -94,13 +93,8 @@ def main():
     parser.add_argument("tool_args", nargs=argparse.REMAINDER,
                         help="All additional arguments for the tool (e.g., interface, output options).")
 
-    try:
-        args = parser.parse_args()
-        logging.debug(f"Arguments parsed: {args}")
-    except Exception as e:
-        logging.error(f"Error parsing arguments: {e}")
-        print(f"Error parsing arguments: {e}")
-        return
+    args = parser.parse_args()
+    logging.debug(f"Arguments parsed: {args}")
 
     db_path = DEFAULT_DB_PATH
 
@@ -122,7 +116,7 @@ def main():
         return
 
     # Ensure tool-specific arguments are provided
-    if not args.tool_args and args.tool:
+    if args.tool and not args.tool_args:
         parser.error(f"Tool '{args.tool}' requires additional arguments (e.g., interface and output options).")
 
     # Rewrite output path if specified in the arguments
@@ -130,10 +124,10 @@ def main():
     os.makedirs(capture_dir, exist_ok=True)
 
     output_path = None
-    additional_args = args.tool_args
-    if additional_args:
+    if args.tool_args:
+        additional_args = args.tool_args
         for i, arg in enumerate(additional_args):
-            if arg in ["-o", "--write", "-w"]:  # Arguments specifying output
+            if arg in ["-o", "--write", "-w"]:
                 if i + 1 < len(additional_args):
                     original_output = additional_args[i + 1]
                     filename = os.path.basename(original_output)

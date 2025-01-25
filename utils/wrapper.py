@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 import os
 import sys
+import subprocess
+import logging
 
 # Add the project directory to the Python path
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
 sys.path.insert(0, BASE_DIR)
 
 from config.config import CONFIG
-import subprocess
-import logging
 
 # Setup logging
 LOG_FILE = os.path.join(CONFIG["log_dir"], "wrapper.log")
@@ -70,7 +70,6 @@ def main():
     command = [original_tool_path] + redirected_args
     logging.debug(f"Executing command: {' '.join(command)}")
 
-    # Change working directory to the capture directory
     try:
         os.makedirs(capture_dir, exist_ok=True)
         result = subprocess.run(command, check=True, capture_output=True, text=True, cwd=capture_dir)
