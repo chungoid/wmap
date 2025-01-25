@@ -91,7 +91,7 @@ def parse_scapy_to_db(pcap_file, db_path=DEFAULT_DB_PATH):
                     logging.error(f"Integrity error on packet {idx + 1}: {e}")
                 except Exception as e:
                     logging.error(f"Error processing packet {idx + 1}: {e}")
-
+                # scapy loads all packets in cap file to memory at once. adjust if you want but be careful.
                 if (idx + 1) % 100 == 0:
                     conn.commit()
                     logging.info(f"Committed 100 packets to the database (processed {idx + 1} packets so far).")
