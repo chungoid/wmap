@@ -7,7 +7,7 @@ WMAP is a modular tool for capturing, parsing, and analyzing Wi-Fi traffic, with
 ### Clone the Repository:
 
 ```bash
-git clone https://github.com/your-repo/wmap.git
+git clone https://github.com/chungoid/wmap.git
 cd wmap
 ```
 ### Install Dependencies:
