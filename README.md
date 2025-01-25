@@ -21,7 +21,7 @@ WMAP is a modular tool for capturing, parsing, and analyzing Wireless Traffic.
 
 Edit the config/config.py file to set up default directories and your WPA-SEC key:
 ```
-wpasec_stanev_org_key = "your_wpa_sec_key" # (create at wpa-sec.stanev.org)
+wpasec_stanev_org_key = "your_wpa_sec_key" # optional
 ```
 
 ## Usage
@@ -43,14 +43,27 @@ WPA-SEC Integration & Capture File Handling:
 ./wmap.py -d /path/to/save/potfile.pot 
 ```
 
-## Features
+Customize Database Queries via queries.yaml in /config/
+```
+  - id: "20"
+    description: "Open Networks with High Traffic"
+    query: >
+      SELECT ssid, source_mac AS ap_mac, COUNT(*) AS packet_count
+      FROM beacons
+      JOIN packets ON beacons.id = packets.id
+      WHERE encryption IS NULL OR encryption = 'Open'
+      GROUP BY ssid, source_mac
+      ORDER BY packet_count DESC;
+```
 
+## Features
+```
     Supports multiple capture tools: hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap.
     Parses captured data using Scapy (default) or TShark.
     Stores parsed data using a SQLite database.
     Uploads and downloads data with WPA-SEC integration.
     Modular and extensible SQLite queries maintained in /tools/query_runner.py
-
+````
 ## Directory Structure
 
     config/: Configuration files for the project.
