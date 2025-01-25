@@ -62,16 +62,13 @@ def parse_scapy_to_db(pcap_file, db_path=DEFAULT_DB_PATH):
 
 
 def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
-    """
-    Parse packets live from a file that's actively being written to
-    and insert them into the database in chunks.
-    """
+    """Parse packets live from a file and insert them into the database in chunks."""
     if not os.path.exists(db_path):
         logging.error(f"Database file '{db_path}' not found.")
         raise FileNotFoundError(f"Database file '{db_path}' does not exist.")
 
     logging.info(f"Starting live parsing of packets from file: {file_path}")
-    processed_packets = 0  # Track how many packets have been processed
+    processed_packets = 0
 
     try:
         while not os.path.exists(file_path):
@@ -112,10 +109,6 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
     finally:
         logging.info(f"Live parsing completed for file: {file_path}")
 
-
-import sqlite3
-import time
-import logging
 
 def process_chunk(chunk, db_path, max_retries=5, retry_delay=0.1):
     """Process a single chunk of packets and insert them into the database."""
@@ -171,9 +164,7 @@ def validate_packet(packet):
 
 
 def is_capture_active(file_path):
-    """
-    Check if the capture process is still active by monitoring the file's size or timestamp.
-    """
+    """Check if the capture process is still active."""
     try:
         initial_size = os.path.getsize(file_path)
         time.sleep(1)
