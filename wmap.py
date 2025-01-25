@@ -2,9 +2,10 @@
 import os
 import argparse
 from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH
+from utils.capture import capture_packets
 from utils.parsing import parse_capture_file, get_latest_capture_file
 from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps, set_wpasec_key
-from tools.scapy_parser import parse_scapy_live
+from tools.scapy_parser import parse_scapy_live, parse_scapy_to_db
 
 
 def handle_wpa_sec_actions(args, db_path):
@@ -53,13 +54,16 @@ def main():
     parser.add_argument("-t", "--tool", type=str, required=True,
                         choices=["hcxdumptool", "tshark", "airodump-ng", "tcpdump", "dumpcap"],
                         help="Capture tool to use (e.g., hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap).")
+    parser.add_argument("--parser", type=str, choices=["scapy", "tshark"], default="scapy",
+                        help="Parser to use for processing the capture (default: scapy).")
     parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"],
                         help="Upload a specific PCAP file or all unmarked files in the capture directory.")
     parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
                         help="Download potfile from WPA-SEC (default path if no path provided).")
     parser.add_argument("--set-key", type=str, help="Set the WPA-SEC key in the database.")
     parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
-    parser.add_argument("--parse-prev", action="store_true", help="Parse all previously captured .pcap files.")
+    parser.add_argument("--parse-existing", type=str,
+                        help="Parse an existing capture file (e.g., /path/to/file.pcap).")
     parser.add_argument("tool_args", nargs=argparse.REMAINDER,
                         help="All additional arguments for the tool (e.g., interface, output options).")
 
@@ -71,32 +75,44 @@ def main():
     if handle_wpa_sec_actions(args, db_path):
         return
 
-    # Parse previous captures
-    if args.parse_prev:
-        parse_previous_captures(db_path)
+    # Parse existing file if provided
+    if args.parse_existing:
+        print(f"Parsing existing capture file '{args.parse_existing}' into the database...")
+        parse_scapy_to_db(args.parse_existing, db_path)
+        print(f"Parsing completed for '{args.parse_existing}'.")
         return
 
     # Ensure tool-specific arguments are provided
     if not args.tool_args:
         parser.error(f"Tool '{args.tool}' requires additional arguments (e.g., interface and output options).")
 
-    # Determine the capture file for live parsing
+    # Rewrite output path if specified in the arguments
     capture_dir = CONFIG["capture_dir"]
-    latest_capture_file = get_latest_capture_file(capture_dir)
+    os.makedirs(capture_dir, exist_ok=True)
 
-    # Run live parsing with Scapy
-    if args.tool and latest_capture_file:
-        print(f"Starting live parsing for {latest_capture_file}...")
-        parse_scapy_live(latest_capture_file, db_path)
+    output_path = None
+    additional_args = args.tool_args
+    for i, arg in enumerate(additional_args):
+        if arg in ["-o", "--write", "-w"]:  # Arguments specifying output
+            if i + 1 < len(additional_args):
+                original_output = additional_args[i + 1]
+                filename = os.path.basename(original_output)
+                output_path = os.path.join(capture_dir, filename)
+                additional_args[i + 1] = output_path
 
-    # Launch Flask web server if not disabled
+    # Run packet capture and live parsing
+    if output_path:
+        print(f"Starting capture with {args.tool}...")
+        capture_packets(
+            args.tool,
+            additional_args,
+            live_parser=lambda: parse_scapy_live(output_path, db_path)
+        )
+
+    # Start web server if not disabled
     if not args.no_webserver:
         from web.app import app
         host = CONFIG.get("web_server_host", "0.0.0.0")
         port = CONFIG.get("web_server_port", 8080)
         print(f"Starting web server on {host}:{port}...")
         app.run(host=host, port=port)
-
-
-if __name__ == "__main__":
-    main()
