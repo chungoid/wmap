@@ -43,8 +43,8 @@ def main():
     parser.add_argument("-t", "--tool", type=str, required=True,
                         choices=["hcxdumptool", "tshark", "airodump-ng", "tcpdump", "dumpcap"],
                         help="Capture tool to use (e.g., hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap).")
-    parser.add_argument("--args", nargs=argparse.REMAINDER, required=True,
-                        help="Additional arguments for the capture tool, including interface and output.")
+    parser.add_argument("tool_args", nargs=argparse.REMAINDER,
+                        help="Arguments for the capture tool (e.g., interface, output options, etc.).")
     parser.add_argument("--parser", type=str, choices=["scapy", "tshark"], default="scapy",
                         help="Parser to use for processing the capture (default: scapy).")
     parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"],
@@ -62,13 +62,16 @@ def main():
     if handle_wpa_sec_actions(args, db_path):
         return
 
-    # Prepare output directory if needed
-    output_path = None
+    # Ensure the tool-specific arguments are provided
+    if not args.tool_args:
+        parser.error(f"Tool '{args.tool}' requires additional arguments (e.g., interface and output options).")
+
+    # Rewrite output path if specified
     capture_dir = CONFIG["capture_dir"]
     os.makedirs(capture_dir, exist_ok=True)
 
-    # Rewrite output to the capture directory if specified in the tool arguments
-    additional_args = args.args
+    output_path = None
+    additional_args = args.tool_args
     for i, arg in enumerate(additional_args):
         if arg in ["-o", "--write", "-w"]:  # Arguments specifying output
             if i + 1 < len(additional_args):
