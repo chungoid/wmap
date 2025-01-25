@@ -1,4 +1,4 @@
-##!/usr/bin/env python3
+#!/usr/bin/ python3
 import os
 import argparse
 from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH

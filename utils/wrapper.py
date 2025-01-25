@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/ python3
 import os
 import sys
 import subprocess
@@ -6,7 +6,7 @@ import subprocess
 from config.config import CONFIG
 
 # Define the capture directory
-CAPTURE_DIR = CONFIG.get("capture_dir")
+capture_dir = CONFIG["capture_dir"]
 
 # Define paths to the original tools
 TOOL_PATHS = {
@@ -37,7 +37,7 @@ def main():
         if args[i] in ["-w", "--write"] and i + 1 < len(args):
             # Redirect the output file to the capture directory
             original_output = args[i + 1]
-            new_output = os.path.join(CAPTURE_DIR, os.path.basename(original_output))
+            new_output = os.path.join(capture_dir, os.path.basename(original_output))
             redirected_args += [args[i], new_output]
             print(f"Redirecting output to: {new_output}")
             i += 2
@@ -48,7 +48,7 @@ def main():
     # Add a default output file for tools that support it, if no output argument is provided
     if tool in ["hcxdumptool", "airodump-ng", "tshark", "tcpdump", "dumpcap"]:
         if not any(arg in redirected_args for arg in ["-w", "--write"]):
-            default_output = os.path.join(CAPTURE_DIR, f"{tool}_capture.pcap")
+            default_output = os.path.join(capture_dir, f"{tool}_capture.pcap")
             redirected_args += ["-w", default_output]
             print(f"No output specified, defaulting to: {default_output}")
 
