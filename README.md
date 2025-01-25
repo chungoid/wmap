@@ -17,14 +17,6 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Configuration
-
-Edit the config/config.py file to set up default directories and configure your WPA-SEC key:
-```
-wpasec_stanev_org_key = "your_wpa_sec_key"  # Set your optional WPA-SEC key here
-```
-The default directory structure is defined in the CONFIG dictionary and can be customized.
-
 ## Usage
 ```
 usage: wmap.py [-h] [-t {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}] [-o OUTPUT] [--parser {scapy,tshark}] [--args ...] [-u [UPLOAD]] [-d [DOWNLOAD]]
@@ -74,7 +66,7 @@ Queries are defined in config/queries.yaml and can be customized or extended. Ex
     Parses captured data using Scapy (default) or TShark.
     Stores parsed data in a SQLite database for further analysis.
     Uploads and downloads data with WPA-SEC integration.
-    Modular and extensible architecture with YAML-configured SQL queries.
+    Extensible YAML-configured SQL queries in wmap/config/queries.yaml.
     Flask-based web server for interactive query visualization.
 
 ## Directory Structure
