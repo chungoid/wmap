@@ -21,8 +21,6 @@ CHUNK_SIZE = 10000  # Number of packets per chunk
 
 def parse_scapy_to_db(pcap_file, db_path=DEFAULT_DB_PATH):
     """Parse a PCAP file using Scapy in chunks and populate the database."""
-    logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
-
     if not os.path.exists(pcap_file):
         logging.error(f"PCAP file '{pcap_file}' not found.")
         raise FileNotFoundError(f"PCAP file '{pcap_file}' does not exist.")
@@ -68,11 +66,10 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
     Parse packets live from a file that's actively being written to
     and insert them into the database in chunks.
     """
-    logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
-
     if not os.path.exists(db_path):
         logging.error(f"Database file '{db_path}' not found.")
         raise FileNotFoundError(f"Database file '{db_path}' does not exist.")
+
     logging.info(f"Starting live parsing of packets from file: {file_path}")
     processed_packets = 0  # Track how many packets have been processed
 
@@ -116,11 +113,25 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
         logging.info(f"Live parsing completed for file: {file_path}")
 
 
-def process_chunk(chunk, db_path):
+import sqlite3
+import time
+import logging
+
+def process_chunk(chunk, db_path, max_retries=5, retry_delay=0.1):
     """Process a single chunk of packets and insert them into the database."""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
     processed_packets = 0
+
+    for attempt in range(max_retries):
+        try:
+            conn = sqlite3.connect(db_path, timeout=10)
+            cursor = conn.cursor()
+            break
+        except sqlite3.OperationalError as e:
+            logging.warning(f"Database connection attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                logging.error("Max retries reached. Aborting chunk processing.")
+                return processed_packets
+            time.sleep(retry_delay)
 
     try:
         for raw_packet in chunk:
@@ -136,6 +147,8 @@ def process_chunk(chunk, db_path):
 
         conn.commit()
         logging.info(f"Processed and committed {processed_packets} packets from the chunk.")
+    except sqlite3.OperationalError as e:
+        logging.error(f"Database locked during chunk processing: {e}")
     except Exception as e:
         logging.error(f"Error processing chunk: {e}")
     finally:
@@ -226,4 +239,3 @@ def process_packet(packet, cursor):
 
     except Exception as e:
         logging.error(f"Error inserting packet into database: {e}")
-

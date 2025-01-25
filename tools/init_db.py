@@ -3,6 +3,7 @@ import sqlite3
 def initialize_database(dbpath):
     """Initialize the SQLite database with the required schema."""
     conn = sqlite3.connect(dbpath)
+    conn.execute("PRAGMA journal_mode=WAL;")
     cursor = conn.cursor()
 
     # Main Packets Table
