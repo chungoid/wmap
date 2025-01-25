@@ -62,7 +62,7 @@ Customize Database Queries via queries.yaml in /config/
     Parses captured data using Scapy (default) or TShark.
     Stores parsed data using a SQLite database.
     Uploads and downloads data with WPA-SEC integration.
-    Modular and extensible SQLite queries maintained in /tools/query_runner.py
+    Modular and extensible SQLite queries maintained in wmap/config/queries.yaml
 ````
 ## Directory Structure
 
