@@ -44,6 +44,11 @@ def main():
 
     original_tool_path = TOOL_PATHS[tool]
     args = sys.argv[2:]  # Remaining arguments after the tool name
+
+    # Remove '--' separator if it exists
+    if "--" in args:
+        args.remove("--")
+
     redirected_args = []
     i = 0
 
