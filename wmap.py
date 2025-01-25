@@ -1,4 +1,4 @@
-#!/usr/bin/ python3
+#!/usr/bin/env python3
 import os
 import argparse
 from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH
@@ -72,7 +72,6 @@ def main():
                 additional_args[i + 1] = output_path
 
     # Run packet capture via the wrapper
-    print(f"Starting capture with {args.tool}...")
     capture_packets(args.tool, additional_args)
 
     # Parse packets into the database if output is provided
