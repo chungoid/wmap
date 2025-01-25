@@ -13,7 +13,6 @@ CONFIG = {
     "db_dir": os.path.join(BASE_DIR, "database"),
     "capture_dir": os.path.join(BASE_DIR, "capture"),
     "tools_dir": os.path.join(BASE_DIR, "tools"),
-    "tests_dir": os.path.join(BASE_DIR, "tests"),
     "web_dir": os.path.join(BASE_DIR, "web"),
 }
 
@@ -33,9 +32,29 @@ LOG_FILES = {
     "query_runner": os.path.join(CONFIG["log_dir"], "query_runner.log"),
 }
 
-def ensure_directories():
-    """Create necessary directories based on CONFIG."""
+def ensure_directories_and_database():
+    """Ensure necessary directories and the database are initialized."""
+    missing_dirs = []
+
+    # Check and create directories
     for key, dir_path in CONFIG.items():
         if dir_path.strip():  # Ensure valid paths
-            print(f"Ensuring directory exists for {key}: {dir_path}")
-            os.makedirs(dir_path, exist_ok=True)
+            if not os.path.exists(dir_path):
+                missing_dirs.append(dir_path)
+                os.makedirs(dir_path, exist_ok=True)
+
+    # Print a single message
+    if missing_dirs:
+        print(f"Initialized missing directories: {', '.join(missing_dirs)}")
+    else:
+        print("All required directories are already initialized.")
+
+    # Ensure database is initialized
+    db_path = DEFAULT_DB_PATH
+    if not os.path.exists(db_path):
+        from tools.init_db import initialize_database
+        print("Initializing database...")
+        initialize_database(db_path)
+        print(f"Database initialized at: {db_path}")
+    else:
+        print("Database is already initialized.")

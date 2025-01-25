@@ -91,4 +91,3 @@ def initialize_database(dbpath):
 
     conn.commit()
     conn.close()
-    print(f"Database initialized successfully at '{dbpath}'.")
