@@ -88,8 +88,8 @@ def download_potfile(output_file):
         print(f"Error downloading potfile: {e}")
 
 
-def upload_pcap(pcap_file):
-    """Upload a PCAP file to WPA-SEC."""
+def upload_all_pcaps():
+    """Automatically upload all PCAP files from the capture directory."""
     key = CONFIG.get("wpa_sec_key")
     if not key:
         print("Error: WPA-SEC key not configured in config.py.")
@@ -97,16 +97,37 @@ def upload_pcap(pcap_file):
 
     url = "https://wpa-sec.stanev.org/?api&upload"
     headers = {"Cookie": f"key={key}"}
-    files = {"file": open(pcap_file, "rb")}
 
-    try:
-        print(f"Uploading {pcap_file} to WPA-SEC...")
-        response = requests.post(url, headers=headers, files=files)
-        response.raise_for_status()
+    capture_dir = CONFIG["capture_dir"]
+    for filename in os.listdir(capture_dir):
+        filepath = os.path.join(capture_dir, filename)
 
-        print(f"Upload successful: {response.text}")
-    except requests.RequestException as e:
-        print(f"Error uploading PCAP file: {e}")
+        # Skip files that have already been uploaded
+        if filename.endswith(".uploaded"):
+            print(f"Skipping already uploaded file: {filename}")
+            continue
+
+        # Check for valid PCAP file extensions
+        if not filename.endswith((".pcap", ".pcapng", ".cap")):
+            print(f"Skipping non-PCAP file: {filename}")
+            continue
+
+        try:
+            print(f"Uploading {filename} to WPA-SEC...")
+            with open(filepath, "rb") as file:
+                files = {"file": file}
+                response = requests.post(url, headers=headers, files=files)
+                response.raise_for_status()
+
+            # Rename the file to mark it as uploaded
+            uploaded_filepath = f"{filepath}.uploaded"
+            os.rename(filepath, uploaded_filepath)
+            print(f"Upload successful. Renamed to: {uploaded_filepath}")
+
+        except requests.RequestException as e:
+            print(f"Error uploading {filename}: {e}")
+        except Exception as e:
+            print(f"Unexpected error with file {filename}: {e}")
 
 
 def main():
@@ -134,7 +155,7 @@ def main():
 
     # Handle WPA-SEC arguments
     if args.upload:
-        upload_pcap(args.upload)
+        upload_all_pcaps()
         return  # Skip other actions if upload is performed
 
     if args.download:
