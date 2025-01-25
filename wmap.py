@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 import os
 import argparse
-import time
 from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH
 from utils.capture import capture_packets
 from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps, set_wpasec_key
-from tools.scapy_parser import parse_scapy_to_db
+from tools.scapy_parser import parse_scapy_live
 
 def handle_wpa_sec_actions(args, db_path):
     """Handle WPA-SEC related actions: upload, download, or set key."""
@@ -25,23 +24,6 @@ def handle_wpa_sec_actions(args, db_path):
         return True
 
     return False
-
-
-def get_latest_capture_file(directory, timeout=5, interval=1):
-    """Get the most recently created capture file in the directory."""
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            files = [
-                os.path.join(directory, f) for f in os.listdir(directory)
-                if os.path.isfile(os.path.join(directory, f)) and f.endswith((".pcap", ".pcapng", ".cap"))
-            ]
-            if files:
-                return max(files, key=os.path.getmtime)  # Return the most recently modified file
-        except Exception as e:
-            print(f"Error checking capture directory: {e}")
-        time.sleep(interval)
-    raise FileNotFoundError(f"No capture files found in directory '{directory}' after {timeout} seconds.")
 
 
 def main():
@@ -75,23 +57,18 @@ def main():
     capture_dir = CONFIG["capture_dir"]
     os.makedirs(capture_dir, exist_ok=True)
 
-    # Run packet capture via the wrapper
+    # Generate output path dynamically
+    output_path = os.path.join(capture_dir, f"{args.tool}_capture.pcap")
+    if "-w" not in args.tool_args and "--write" not in args.tool_args:
+        args.tool_args += ["-w", output_path]
+
+    # Start live parsing in parallel
     print(f"Starting capture with {args.tool}...")
     capture_packets(
         args.tool,
         args.tool_args,
-        live_parser=lambda: parse_scapy_to_db(
-            get_latest_capture_file(capture_dir), db_path
-        )
+        live_parser=lambda: parse_scapy_live(output_path, db_path)
     )
-
-    # Launch Flask web server if not disabled
-    if not args.no_webserver:
-        from web.app import app
-        host = CONFIG.get("web_server_host", "0.0.0.0")
-        port = CONFIG.get("web_server_port", 8080)
-        print(f"Starting web server on {host}:{port}...")
-        app.run(host=host, port=port)
 
 
 if __name__ == "__main__":

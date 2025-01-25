@@ -1,6 +1,8 @@
 import sqlite3
 import logging
 import os
+import time
+
 from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11ProbeReq, Dot11Deauth
 from scapy.utils import PcapReader, RawPcapReader
 from config.config import LOG_FILES, DEFAULT_DB_PATH
@@ -49,27 +51,56 @@ def parse_scapy_to_db(pcap_file, db_path=DEFAULT_DB_PATH):
         logging.info(f"Parsing completed for {pcap_file}.")
 
 
-def parse_scapy_live(stream, db_path=DEFAULT_DB_PATH):
-    """Parse packets live from a stream and insert them into the database."""
+def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
+    """
+    Parse packets live from a file that's actively being written to
+    and insert them into the database.
+    """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     try:
-        logging.info("Starting live parsing of packets...")
-        for idx, (packet, _) in enumerate(RawPcapReader(stream)):
-            process_packet(packet, cursor)
+        logging.info(f"Starting live parsing of packets from file: {file_path}")
+        processed_packets = 0  # Track how many packets have been processed
 
-            # Commit every 100 packets
-            if (idx + 1) % 100 == 0:
-                conn.commit()
-                logging.info(f"Committed 100 packets to the database (processed {idx + 1} packets so far).")
+        while True:
+            with RawPcapReader(file_path) as pcap_reader:
+                for idx, (packet, _) in enumerate(pcap_reader):
+                    if idx < processed_packets:
+                        continue  # Skip already processed packets
+
+                    process_packet(packet, cursor)
+                    processed_packets += 1
+
+                    # Commit every 100 packets
+                    if processed_packets % 100 == 0:
+                        conn.commit()
+                        logging.info(f"Committed 100 packets (processed {processed_packets} total).")
+
+            # Check if capture is still ongoing
+            if not is_capture_active(file_path):
+                break
+            time.sleep(check_interval)
 
     except Exception as e:
         logging.error(f"Error during live parsing: {e}")
     finally:
         conn.commit()
         conn.close()
-        logging.info("Live parsing completed.")
+        logging.info(f"Live parsing completed for file: {file_path}")
+
+
+def is_capture_active(file_path):
+    """
+    Check if the capture process is still active by monitoring the file's size or timestamp.
+    """
+    try:
+        initial_size = os.path.getsize(file_path)
+        time.sleep(1)  # Check file size after a short delay
+        return initial_size != os.path.getsize(file_path)
+    except Exception as e:
+        logging.error(f"Error monitoring file '{file_path}': {e}")
+        return False
 
 
 def process_packet(packet, cursor):
