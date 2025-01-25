@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import argparse
-from config.config import CONFIG, ensure_directories
+from config.config import CONFIG, ensure_directories, DEFAULT_DB_PATH
 from tools.init_db import initialize_database
 from utils.capture import prepare_output_directory, capture_packets, determine_tool_args
 from utils.parsing import parse_capture_file
@@ -15,6 +15,28 @@ def initialize_database_if_needed(db_path):
         initialize_database(db_path)
     else:
         print(f"Database already exists at {db_path}.")
+
+
+def handle_wpa_sec_actions(args):
+    """Handle WPA-SEC related actions: upload or download."""
+    if args.upload:
+        if args.upload == CONFIG["capture_dir"]:
+            upload_all_pcaps()
+        else:
+            upload_pcap(args.upload)
+        return True
+
+    if args.download:
+        download_potfile(args.download)
+        return True
+
+    return False
+
+
+def validate_capture_arguments(args, parser):
+    """Ensure required arguments for capture and parsing are provided."""
+    if not args.interface or not args.tool or not args.output:
+        parser.error("interface, -t/--tool, and -o/--output are required for capture and parsing.")
 
 
 def main():
@@ -33,39 +55,42 @@ def main():
                         help="Upload a specific PCAP file or all unmarked files in the capture directory.")
     parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
                         help="Download potfile from WPA-SEC (default path if no path provided).")
+    parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
 
     args = parser.parse_args()
 
-    # Handle WPA-SEC upload or download actions
-    if args.upload:
-        if args.upload == CONFIG["capture_dir"]:
-            upload_all_pcaps()
-        else:
-            upload_pcap(args.upload)
+    # Handle WPA-SEC actions
+    if handle_wpa_sec_actions(args):
         return
 
-    if args.download:
-        download_potfile(args.download)
-        return
-
-    # Validate required arguments for capture and parsing
-    if not args.interface or not args.tool or not args.output:
-        parser.error("interface, -t/--tool, and -o/--output are required for capture and parsing.")
+    # Validate capture-related arguments
+    if not args.no_webserver:
+        if not args.interface or not args.tool or not args.output:
+            parser.error("interface, -t/--tool, and -o/--output are required for capture and parsing.")
 
     # Initialize database and prepare output directory
-    db_path = os.path.join(CONFIG["db_dir"], "wmap.db")
+    db_path = DEFAULT_DB_PATH
     initialize_database_if_needed(db_path)
     prepare_output_directory(args.output)
 
-    # Run packet capture
-    additional_args = args.args if args.args else []
-    additional_args = determine_tool_args(args.tool, args.output, additional_args)
-    capture_packets(args.tool, args.interface, args.output, additional_args)
+    if not args.no_webserver:
+        # Run packet capture
+        additional_args = args.args if args.args else []
+        additional_args = determine_tool_args(args.tool, args.output, additional_args)
+        capture_packets(args.tool, args.interface, args.output, additional_args)
 
-    # Parse packets into the database
-    parse_capture_file(args.parser, args.output, db_path)
+        # Parse packets into the database
+        parse_capture_file(args.parser, args.output, db_path)
 
-    print("Capture and parsing completed successfully.")
+        print("Capture and parsing completed successfully.")
+
+    # Launch Flask web server if not disabled
+    if not args.no_webserver:
+        from web.app import app
+        host = CONFIG.get("web_server_host", "0.0.0.0")
+        port = CONFIG.get("web_server_port", 8080)
+        print(f"Starting web server on {host}:{port}...")
+        app.run(host=host, port=port)
 
 
 if __name__ == "__main__":

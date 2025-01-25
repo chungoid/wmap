@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMAP Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.1/socket.io.min.js"></script>
+    <script>
+        const socket = io();
+
+        socket.on("connect", () => {
+            console.log("Connected to server");
+        });
+
+        socket.on("update", (data) => {
+            console.log("Live update received:", data);
+            // Update UI with new data here
+        });
+    </script>
+</head>
+<body>
+    <h1>WMAP Dashboard</h1>
+    <p>Use the available queries to interact with the database:</p>
+    <ul id="query-list"></ul>
+
+    <script>
+        fetch("/query/1")
+            .then(response => response.json())
+            .then(data => {
+                console.log("Query data:", data);
+                // Populate the UI with data
+            });
+    </script>
+</body>
+</html>
