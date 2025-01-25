@@ -21,7 +21,7 @@ pip install -r requirements.txt
 
 Edit the config/config.py file to set up default directories and your WPA-SEC key:
 
-# SET YOUR WPA-SEC KEY HERE (create at wpa-sec.stanev.org)
+## SET YOUR WPA-SEC KEY HERE (create at wpa-sec.stanev.org)
 wpasec_stanev_org_key = "your_wpa_sec_key"
 
 
