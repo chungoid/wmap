@@ -2,8 +2,7 @@
 import os
 import argparse
 from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH
-from tools.init_db import initialize_database
-from utils.capture import prepare_output_directory, capture_packets, determine_tool_args
+from utils.capture import capture_packets, determine_tool_args
 from utils.parsing import parse_capture_file
 from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps, set_wpasec_key
 
