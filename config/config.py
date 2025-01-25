@@ -1,7 +1,6 @@
 import os
 
 # USER OPTIONS
-wpasec_stanev_org_key = ""  # Define your key from wpa-sec.stanev.org
 HOSTADDR = "0.0.0.0"  # Default address for /web/app.py
 PORT = 8080  # Default port for /web/app.py
 
@@ -37,6 +36,6 @@ LOG_FILES = {
 def ensure_directories():
     """Create necessary directories based on CONFIG."""
     for key, dir_path in CONFIG.items():
-        if os.path.isdir(dir_path):  # Ensure valid directories
+        if dir_path.strip():  # Ensure valid paths
             print(f"Ensuring directory exists for {key}: {dir_path}")
             os.makedirs(dir_path, exist_ok=True)
