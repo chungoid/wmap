@@ -1,12 +1,11 @@
-#!/usr/bin/ python3
+#!/usr/bin/env python3
 import os
 import sys
 import subprocess
 
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
-sys.path.insert(0, BASE_DIR)
-
 from config.config import CONFIG
+
+# Define the capture directory
 capture_dir = CONFIG["capture_dir"]
 
 # Define paths to the original tools
@@ -57,9 +56,10 @@ def main():
     command = [original_tool_path] + redirected_args
     print(f"Executing: {' '.join(command)}")
 
-    # Run the original tool with modified arguments
+    # Change working directory to the capture directory
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        os.makedirs(capture_dir, exist_ok=True)
+        result = subprocess.run(command, check=True, capture_output=True, text=True, cwd=capture_dir)
         print(f"Capture with {tool} completed successfully.")
         if result.stdout:
             print(result.stdout)
