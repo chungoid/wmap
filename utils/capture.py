@@ -26,22 +26,32 @@ def determine_tool_args(tool, output, additional_args):
 
 def capture_packets(tool, additional_args):
     """Run the specified capture tool."""
-    # Adjust output paths to use the capture directory
+    # Force all outputs into the capture directory
+    output_arg = None
     for i, arg in enumerate(additional_args):
-        if arg in ["-w", "--write"]:  # Common output arguments
-            output_index = i + 1
-            if output_index < len(additional_args):
-                output_file = additional_args[output_index]
-                if not os.path.isabs(output_file):  # If not absolute path
-                    new_path = os.path.join(CONFIG["capture_dir"], output_file)
-                    additional_args[output_index] = new_path
-                    print(f"Adjusted output file path to: {new_path}")
+        if arg in ["-w", "--write"]:
+            output_arg = i + 1
+            break
+
+    if output_arg and output_arg < len(additional_args):
+        # Adjust the output file path
+        original_output = additional_args[output_arg]
+        if not os.path.isabs(original_output):  # If relative path
+            new_output = os.path.join(CONFIG["capture_dir"], original_output)
+        else:  # If absolute path
+            new_output = os.path.join(CONFIG["capture_dir"], os.path.basename(original_output))
+        additional_args[output_arg] = new_output
+        print(f"Redirecting output to: {new_output}")
+    else:
+        # If no -w/--write is specified, enforce a default file in the capture directory
+        default_output = os.path.join(CONFIG["capture_dir"], f"{tool}_capture.pcap")
+        additional_args += ["-w", default_output]
+        print(f"No output file specified, defaulting to: {default_output}")
 
     # Construct the command and execute it
-    print(f"Starting capture with {tool}...")
-    command = [tool] + additional_args
+    print(f"Starting capture with command: {' '.join([tool] + additional_args)}")
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = subprocess.run([tool] + additional_args, check=True, capture_output=True, text=True)
         print(f"Capture completed with {tool}.")
         if result.stdout:
             print(result.stdout)
