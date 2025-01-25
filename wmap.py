@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 import os
 import argparse
+import time
 from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH
 from utils.capture import capture_packets
 from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps, set_wpasec_key
 from tools.scapy_parser import parse_scapy_to_db
-from tools.tshark_parser import parse_tshark_live_to_db
-
 
 def handle_wpa_sec_actions(args, db_path):
     """Handle WPA-SEC related actions: upload, download, or set key."""
@@ -26,6 +25,23 @@ def handle_wpa_sec_actions(args, db_path):
         return True
 
     return False
+
+
+def get_latest_capture_file(directory, timeout=5, interval=1):
+    """Get the most recently created capture file in the directory."""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            files = [
+                os.path.join(directory, f) for f in os.listdir(directory)
+                if os.path.isfile(os.path.join(directory, f)) and f.endswith((".pcap", ".pcapng", ".cap"))
+            ]
+            if files:
+                return max(files, key=os.path.getmtime)  # Return the most recently modified file
+        except Exception as e:
+            print(f"Error checking capture directory: {e}")
+        time.sleep(interval)
+    raise FileNotFoundError(f"No capture files found in directory '{directory}' after {timeout} seconds.")
 
 
 def main():
@@ -56,36 +72,18 @@ def main():
     if not args.tool_args:
         parser.error(f"Tool '{args.tool}' requires additional arguments (e.g., interface and output options).")
 
-    # Rewrite output path if specified in the arguments
     capture_dir = CONFIG["capture_dir"]
     os.makedirs(capture_dir, exist_ok=True)
 
-    output_path = None
-    additional_args = args.tool_args
-    for i, arg in enumerate(additional_args):
-        if arg in ["-o", "--write", "-w"]:  # Arguments specifying output
-            if i + 1 < len(additional_args):
-                original_output = additional_args[i + 1]
-                filename = os.path.basename(original_output)
-                output_path = os.path.join(capture_dir, filename)
-                additional_args[i + 1] = output_path
-
-    # Handle live parsing for TShark
-    if args.tool == "tshark":
-        interface = next((arg for i, arg in enumerate(additional_args) if additional_args[i - 1] in ["-i", "--interface"]), None)
-        if interface:
-            print(f"Starting live parsing with TShark on interface '{interface}'...")
-            parse_tshark_live_to_db(interface, db_path)
-            return
-
     # Run packet capture via the wrapper
     print(f"Starting capture with {args.tool}...")
-    capture_packets(args.tool, additional_args, live_parser=lambda: parse_scapy_to_db(output_path, db_path) if output_path else None)
-
-    # Parse packets into the database post-capture if output is provided and no live parsing
-    if output_path and args.tool != "tshark":
-        print(f"Parsing capture file '{output_path}' into the database...")
-        parse_scapy_to_db(output_path, db_path)
+    capture_packets(
+        args.tool,
+        args.tool_args,
+        live_parser=lambda: parse_scapy_to_db(
+            get_latest_capture_file(capture_dir), db_path
+        )
+    )
 
     # Launch Flask web server if not disabled
     if not args.no_webserver:
