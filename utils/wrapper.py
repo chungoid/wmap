@@ -1,11 +1,18 @@
+#!/usr/bin/env python3
 import os
-from config.config import CONFIG, LOG_FILES
-import logging
-import subprocess
 import sys
 
-LOG_FILE = LOG_FILES["wrapper"]
-os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+# Add the project directory to the Python path
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
+sys.path.insert(0, BASE_DIR)
+
+from config.config import CONFIG
+import subprocess
+import logging
+
+# Setup logging
+LOG_FILE = os.path.join(CONFIG["log_dir"], "wrapper.log")
+os.makedirs(CONFIG["log_dir"], exist_ok=True)
 
 logging.basicConfig(
     filename=LOG_FILE,
@@ -63,6 +70,7 @@ def main():
     command = [original_tool_path] + redirected_args
     logging.debug(f"Executing command: {' '.join(command)}")
 
+    # Change working directory to the capture directory
     try:
         os.makedirs(capture_dir, exist_ok=True)
         result = subprocess.run(command, check=True, capture_output=True, text=True, cwd=capture_dir)
@@ -70,12 +78,13 @@ def main():
         if result.stdout:
             logging.debug(result.stdout)
         if result.stderr:
-            logging.warning(f"Warnings or errors:\n{result.stderr}")
+            logging.warning(result.stderr)
     except subprocess.CalledProcessError as e:
         logging.error(f"Error during capture with {tool}: {e}")
         if e.stderr:
             logging.error(f"Tool output:\n{e.stderr}")
         sys.exit(e.returncode)
+
 
 if __name__ == "__main__":
     main()
