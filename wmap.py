@@ -5,6 +5,8 @@ from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PA
 from utils.capture import capture_packets
 from utils.parsing import parse_capture_file
 from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps, set_wpasec_key
+from tools.scapy_parser import parse_scapy_to_db
+from tools.tshark_parser import parse_tshark_live_to_db
 
 
 def handle_wpa_sec_actions(args, db_path):
@@ -34,14 +36,14 @@ def main():
     parser.add_argument("-t", "--tool", type=str, required=True,
                         choices=["hcxdumptool", "tshark", "airodump-ng", "tcpdump", "dumpcap"],
                         help="Capture tool to use (e.g., hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap).")
-    parser.add_argument("--parser", type=str, choices=["scapy", "tshark"], default="scapy",
-                        help="Parser to use for processing the capture (default: scapy).")
     parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"],
                         help="Upload a specific PCAP file or all unmarked files in the capture directory.")
     parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
                         help="Download potfile from WPA-SEC (default path if no path provided).")
     parser.add_argument("--set-key", type=str, help="Set the WPA-SEC key in the database.")
     parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
+    parser.add_argument("--parser", type=str, choices=["scapy", "tshark"], default="scapy",
+                        help="Parser to use for processing the capture (default: scapy).")
     parser.add_argument("tool_args", nargs=argparse.REMAINDER,
                         help="All additional arguments for the tool (e.g., interface, output options).")
 
@@ -71,13 +73,26 @@ def main():
                 output_path = os.path.join(capture_dir, filename)
                 additional_args[i + 1] = output_path
 
+    # Run live parsing if supported
+    if args.tool == "tshark" and args.parser == "tshark":
+        print(f"Starting live parsing with {args.tool}...")
+        interface = next((arg for i, arg in enumerate(additional_args) if additional_args[i - 1] in ["-i", "--interface"]), None)
+        if not interface:
+            parser.error("Interface (-i or --interface) is required for live parsing with TShark.")
+        parse_tshark_live_to_db(interface, db_path)
+        return
+
     # Run packet capture via the wrapper
+    print(f"Starting capture with {args.tool}...")
     capture_packets(args.tool, additional_args)
 
     # Parse packets into the database if output is provided
     if output_path:
         print(f"Parsing capture file '{output_path}' into the database...")
-        parse_capture_file(args.parser, output_path, db_path)
+        if args.parser == "scapy":
+            parse_scapy_to_db(output_path, db_path)
+        elif args.parser == "tshark":
+            parse_capture_file(args.parser, output_path, db_path)
 
     # Launch Flask web server if not disabled
     if not args.no_webserver:

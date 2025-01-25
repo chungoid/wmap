@@ -2,22 +2,42 @@ import sqlite3
 import json
 import subprocess
 import logging
+import os
+from config.config import LOG_FILES, DEFAULT_DB_PATH
 
+# Setup logging
+LOG_FILE = LOG_FILES["tshark_parser"]
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
-LOG_FILE = "tshark_parser.log"
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-def parse_tshark_to_db(pcap_file, db_path="wmap.db"):
+
+def extract_field(fields, key, default=None):
+    """Extract a field from TShark output with proper handling for lists."""
+    value = fields.get(key, default)
+    if isinstance(value, list):
+        return value[0] if value else default
+    return value
+
+
+def parse_tshark_to_db(pcap_file, db_path=DEFAULT_DB_PATH):
     """Parse packets from a pcap file using TShark and insert them into the database."""
+    if not os.path.exists(pcap_file):
+        logging.error(f"PCAP file '{pcap_file}' not found.")
+        raise FileNotFoundError(f"PCAP file '{pcap_file}' does not exist.")
+
+    if not os.path.exists(db_path):
+        logging.error(f"Database file '{db_path}' not found.")
+        raise FileNotFoundError(f"Database file '{db_path}' does not exist.")
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     try:
-
         logging.info(f"Running TShark on {pcap_file}...")
         result = subprocess.run([
             "tshark", "-r", pcap_file, "-T", "json",
@@ -41,19 +61,20 @@ def parse_tshark_to_db(pcap_file, db_path="wmap.db"):
 
     for packet in packets:
         try:
-
             fields = packet.get("_source", {}).get("layers", {})
-            ts_sec = fields.get("frame.time_epoch", [0])[0] if isinstance(fields.get("frame.time_epoch"), list) else fields.get("frame.time_epoch", 0)
-            ts_sec = int(float(ts_sec))  # Convert to integer seconds
 
-            source_mac = fields.get("wlan.sa", [None])[0] if isinstance(fields.get("wlan.sa"), list) else fields.get("wlan.sa")
-            dest_mac = fields.get("wlan.da", [None])[0] if isinstance(fields.get("wlan.da"), list) else fields.get("wlan.da")
-            signal = fields.get("radiotap.dbm_antsignal", [-100])[0] if isinstance(fields.get("radiotap.dbm_antsignal"), list) else fields.get("radiotap.dbm_antsignal")
+            # Extract fields
+            ts_sec = extract_field(fields, "frame.time_epoch", 0)
+            ts_sec = int(float(ts_sec)) if ts_sec else None
+
+            source_mac = extract_field(fields, "wlan.sa")
+            dest_mac = extract_field(fields, "wlan.da")
+            signal = extract_field(fields, "radiotap.dbm_antsignal", -100)
             signal = int(signal) if signal is not None else None
-            ssid = fields.get("wlan.ssid", [None])[0] if isinstance(fields.get("wlan.ssid"), list) else fields.get("wlan.ssid")
-            packet_type = fields.get("wlan.fc.type_subtype", [None])[0] if isinstance(fields.get("wlan.fc.type_subtype"), list) else fields.get("wlan.fc.type_subtype")
+            ssid = extract_field(fields, "wlan.ssid")
+            packet_type = extract_field(fields, "wlan.fc.type_subtype")
 
-            # packets table
+            # Insert into packets table
             cursor.execute("""
             INSERT INTO packets (
                 ts_sec, ts_usec, phyname, source_mac, dest_mac, trans_mac,
@@ -61,21 +82,22 @@ def parse_tshark_to_db(pcap_file, db_path="wmap.db"):
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (ts_sec, 0, "802.11", source_mac, dest_mac, None, None, None, None, signal, "802.11", None, None))
 
-            # beacons table
+            # Insert into beacons table
             if packet_type == "0x08":  # Beacon frame
                 cursor.execute("""
                 INSERT INTO beacons (id, ssid, encryption, capabilities, beacon_interval)
                 VALUES (NULL, ?, ?, ?, ?)
                 """, (ssid, "WPA2-PSK", "HT20", 100))
 
-            # probes table
+            # Insert into probes table
             if packet_type == "0x04":  # Probe request
                 cursor.execute("""
                 INSERT INTO probes (id, ssid, is_response)
                 VALUES (NULL, ?, 0)
                 """, (ssid,))
 
-            logging.debug(f"Inserted packet: ts_sec={ts_sec}, source_mac={source_mac}, dest_mac={dest_mac}, signal={signal}")
+            logging.debug(
+                f"Inserted packet: ts_sec={ts_sec}, source_mac={source_mac}, dest_mac={dest_mac}, signal={signal}")
 
         except Exception as e:
             logging.error(f"Error inserting packet: {e}. Packet data: {packet}")
@@ -84,12 +106,60 @@ def parse_tshark_to_db(pcap_file, db_path="wmap.db"):
     conn.close()
     logging.info(f"Parsing and database insertion completed for {pcap_file}.")
 
-if __name__ == "__main__":
-    import argparse
 
-    parser = argparse.ArgumentParser(description="Parse a pcap file and load data into the database using TShark.")
-    parser.add_argument("pcap_file", type=str, help="Path to the pcap or pcapng file.")
-    parser.add_argument("-d", "--db_path", type=str, default="wmap.db", help="Path to the SQLite database.")
-    args = parser.parse_args()
+def parse_tshark_live_to_db(interface, db_path=DEFAULT_DB_PATH):
+    """Parse packets live using TShark and insert them into the database."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
 
-    parse_tshark_to_db(args.pcap_file, args.db_path)
+    try:
+        logging.info(f"Starting live parsing on interface {interface} using TShark...")
+        process = subprocess.Popen([
+            "tshark", "-i", interface, "-T", "json",
+            "-e", "frame.time_epoch",
+            "-e", "wlan.sa",
+            "-e", "wlan.da",
+            "-e", "radiotap.dbm_antsignal",
+            "-e", "wlan.ssid",
+            "-e", "wlan.fc.type_subtype"
+        ], stdout=subprocess.PIPE, text=True)
+
+        buffer = ""
+        for line in process.stdout:
+            buffer += line
+            try:
+                packets = json.loads(buffer)
+                for packet in packets:
+                    try:
+                        fields = packet.get("_source", {}).get("layers", {})
+                        ts_sec = extract_field(fields, "frame.time_epoch", 0)
+                        ts_sec = int(float(ts_sec)) if ts_sec else None
+
+                        source_mac = extract_field(fields, "wlan.sa")
+                        dest_mac = extract_field(fields, "wlan.da")
+                        signal = extract_field(fields, "radiotap.dbm_antsignal", -100)
+                        signal = int(signal) if signal is not None else None
+                        ssid = extract_field(fields, "wlan.ssid")
+                        packet_type = extract_field(fields, "wlan.fc.type_subtype")
+
+                        cursor.execute("""
+                        INSERT INTO packets (
+                            ts_sec, ts_usec, phyname, source_mac, dest_mac, trans_mac,
+                            freq, channel, packet_len, signal, dlt, tags, datarate
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (ts_sec, 0, "802.11", source_mac, dest_mac, None, None, None, None, signal, "802.11", None,
+                              None))
+
+                        conn.commit()
+
+                    except Exception as e:
+                        logging.error(f"Error processing live packet: {e}")
+                buffer = ""
+            except json.JSONDecodeError:
+                pass
+
+    except Exception as e:
+        logging.error(f"Error during live TShark parsing: {e}")
+    finally:
+        conn.close()
+        logging.info("Live parsing completed.")
