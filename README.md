@@ -19,6 +19,8 @@ pip install -r requirements.txt
 
 ## Usage
 ```
+example: sudo ./wmap.py -t tcpdump -- -i wlan0 -w capture.pcap
+
 usage: wmap.py [-h] [-t {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}] [--parser {scapy,tshark}] [-u [UPLOAD]] [-d [DOWNLOAD]] [--set-key SET_KEY] [--no-webserver] [--parse-existing PARSE_EXISTING] ...
 
 Wi-Fi packet capture and parsing tool.
