@@ -4,7 +4,6 @@ import sqlite3
 
 from config.config import CONFIG, DEFAULT_DB_PATH
 
-
 def download_potfile(output_file, db_path=DEFAULT_DB_PATH):
     """Download the potfile from WPA-SEC."""
     key = get_wpasec_key("wpa_sec_key", db_path)
