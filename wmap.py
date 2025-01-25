@@ -62,31 +62,26 @@ def main():
     if handle_wpa_sec_actions(args, db_path):
         return
 
-    # Build capture command and ensure output redirection to `capture/`
-    additional_args = args.args
+    # Prepare output directory if needed
+    output_path = None
     capture_dir = CONFIG["capture_dir"]
     os.makedirs(capture_dir, exist_ok=True)
 
-    # Check if the tool specifies an output argument and rewrite it to the capture directory
-    output_path = None
+    # Rewrite output to the capture directory if specified in the tool arguments
+    additional_args = args.args
     for i, arg in enumerate(additional_args):
-        if arg in ["-o", "--write", "-w"]:  # Arguments that specify output
+        if arg in ["-o", "--write", "-w"]:  # Arguments specifying output
             if i + 1 < len(additional_args):
                 original_output = additional_args[i + 1]
                 filename = os.path.basename(original_output)
                 output_path = os.path.join(capture_dir, filename)
                 additional_args[i + 1] = output_path
 
-    # Validate that output was provided if required by the tool
-    if not output_path and args.tool in ["tshark", "airodump-ng", "tcpdump", "dumpcap"]:
-        print(f"Error: The tool '{args.tool}' requires an output file specified in its arguments.")
-        return
-
     # Run packet capture
     print(f"Starting capture with {args.tool}...")
     capture_packets(args.tool, additional_args)
 
-    # Parse packets into the database
+    # Parse packets into the database if output is provided
     if output_path:
         print(f"Parsing capture file '{output_path}' into the database...")
         parse_capture_file(args.parser, output_path, db_path)
