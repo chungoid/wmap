@@ -25,7 +25,7 @@ wpasec_stanev_org_key = "your_wpa_sec_key"  # Set your optional WPA-SEC key here
 ```
 The default directory structure is defined in the CONFIG dictionary and can be customized.
 
-Usage
+## Usage
 ```
 usage: wmap.py [-h] [-t {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}] [-o OUTPUT] [--parser {scapy,tshark}] [--args ...] [-u [UPLOAD]] [-d [DOWNLOAD]]
                [--set-key SET_KEY] [--no-webserver]
@@ -54,7 +54,7 @@ options:
 
 ```
 
-Customize Database Queries
+## Customize Database Queries
 
 Queries are defined in config/queries.yaml and can be customized or extended. Example:
 ```
@@ -68,7 +68,7 @@ Queries are defined in config/queries.yaml and can be customized or extended. Ex
     GROUP BY ssid, source_mac
     ORDER BY packet_count DESC;
 ```
-Features
+## Features
 
     Supports multiple capture tools: hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap.
     Parses captured data using Scapy (default) or TShark.
@@ -77,7 +77,7 @@ Features
     Modular and extensible architecture with YAML-configured SQL queries.
     Flask-based web server for interactive query visualization.
 
-Directory Structure
+## Directory Structure
 
     config/: Configuration files for the project.
     database/: Contains the SQLite database for parsed data.
@@ -87,7 +87,7 @@ Directory Structure
     utils/: Utility modules for handling captures, parsing, and WPA-SEC integration.
     web/: Flask-based web application for viewing and querying data.
 
-License
+## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
 Attribution
