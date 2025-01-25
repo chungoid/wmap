@@ -28,7 +28,7 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
         logging.info(f"Starting live parsing of packets from file: {file_path}")
         processed_packets = 0  # Track how many packets have been processed
 
-        # Wait until the file exists and is writable
+        # Wait until the file exists
         while not os.path.exists(file_path):
             logging.info(f"Waiting for capture file '{file_path}' to be created...")
             time.sleep(check_interval)
@@ -36,21 +36,28 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
         while True:
             try:
                 with RawPcapReader(file_path) as pcap_reader:
-                    for idx, (packet, _) in enumerate(pcap_reader):
+                    for idx, (raw_packet, _) in enumerate(pcap_reader):
                         if idx < processed_packets:
                             continue  # Skip already processed packets
 
-                        if not validate_packet(packet):
-                            logging.warning(f"Skipping invalid packet at index {idx}.")
-                            continue
+                        try:
+                            # Parse the raw bytes into a Scapy packet
+                            packet = Dot11(raw_packet)
+                            if not validate_packet(packet):
+                                logging.warning(f"Skipping invalid packet at index {idx}.")
+                                continue
 
-                        process_packet(packet, cursor)
-                        processed_packets += 1
+                            process_packet(packet, cursor)
+                            processed_packets += 1
 
-                        # Commit every 100 packets
-                        if processed_packets % 100 == 0:
-                            conn.commit()
-                            logging.info(f"Committed 100 packets (processed {processed_packets} total).")
+                            # Commit every 100 packets
+                            if processed_packets % 100 == 0:
+                                conn.commit()
+                                logging.info(f"Committed 100 packets (processed {processed_packets} total).")
+                        except Exception as e:
+                            logging.error(f"Error processing packet at index {idx}: {e}")
+                            logging.debug(f"Raw packet data: {raw_packet}")
+
             except EOFError:
                 # File is being written; wait before attempting to read again
                 logging.debug("Reached end of file; waiting for more data...")
@@ -72,27 +79,13 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
 
 
 def validate_packet(packet):
-    """
-    Validate packet data types and ensure compatibility with the database schema.
-    """
+    """Ensure the packet meets basic requirements before processing."""
     try:
-        ts_sec = int(packet.time)
-        ts_usec = int((packet.time - ts_sec) * 1_000_000)
-        source_mac = packet.addr2 if packet.haslayer(Dot11) else None
-        dest_mac = packet.addr1 if packet.haslayer(Dot11) else None
-        trans_mac = packet.addr3 if packet.haslayer(Dot11) else None
-        packet_len = len(packet)
-
-        # Ensure required fields are not None and have valid types
-        if not isinstance(ts_sec, int) or not isinstance(ts_usec, int) or not isinstance(packet_len, int):
-            raise ValueError("Invalid packet metadata types.")
-        if source_mac and not isinstance(source_mac, str):
-            raise ValueError("Invalid source_mac type.")
-        if dest_mac and not isinstance(dest_mac, str):
-            raise ValueError("Invalid dest_mac type.")
-        if trans_mac and not isinstance(trans_mac, str):
-            raise ValueError("Invalid trans_mac type.")
-
+        # Example validations
+        if not hasattr(packet, "time"):
+            raise ValueError("Packet has no 'time' attribute.")
+        if not packet.haslayer(Dot11):
+            raise ValueError("Packet is not a valid 802.11 frame.")
         return True
     except Exception as e:
         logging.error(f"Packet validation failed: {e}")
