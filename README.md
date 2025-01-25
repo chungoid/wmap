@@ -1,6 +1,6 @@
-# WMAP: Wi-Fi Monitoring and Analysis Platform
+# WMAP: Wi-Fi Monitoring & Analysis Platform
 
-WMAP is a modular tool for capturing, parsing, and analyzing Wi-Fi traffic, with support for WPA-SEC integration and live traffic monitoring.
+Supports capturing, parsing, storing, and analyzing live or previously captured Wi-Fi traffic.
 
 ## Installation
 
