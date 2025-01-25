@@ -21,7 +21,7 @@ WMAP is a modular tool for capturing, parsing, and analyzing Wireless Traffic.
 
 Edit the config/config.py file to set up default directories and your WPA-SEC key:
 ```
-wpasec_stanev_org_key = "your_wpa_sec_key" # optional
+wpasec_stanev_org_key = "your_wpa_sec_key" # optional value
 ```
 
 ## Usage
