@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11ProbeReq, Dot11Deauth
-from scapy.utils import RawPcapReader
+from scapy.utils import PcapReader, RawPcapReader
 from config.config import LOG_FILES, DEFAULT_DB_PATH
 
 # Setup logging
@@ -15,6 +15,40 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
+
+def parse_scapy_to_db(pcap_file, db_path=DEFAULT_DB_PATH):
+    """Parse a pcap file using Scapy and populate the database."""
+    if not os.path.exists(pcap_file):
+        logging.error(f"PCAP file '{pcap_file}' not found.")
+        raise FileNotFoundError(f"PCAP file '{pcap_file}' does not exist.")
+
+    if not os.path.exists(db_path):
+        logging.error(f"Database file '{db_path}' not found.")
+        raise FileNotFoundError(f"Database file '{db_path}' does not exist.")
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        logging.info(f"Parsing pcap file: {pcap_file}")
+        with PcapReader(pcap_file) as packets:
+            for idx, packet in enumerate(packets):
+                process_packet(packet, cursor)
+
+                # Commit every 100 packets
+                if (idx + 1) % 100 == 0:
+                    conn.commit()
+                    logging.info(f"Committed 100 packets (processed {idx + 1} packets so far).")
+
+    except Exception as e:
+        logging.error(f"Error reading pcap file '{pcap_file}': {e}")
+        raise
+    finally:
+        conn.commit()
+        conn.close()
+        logging.info(f"Parsing completed for {pcap_file}.")
+
 
 def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
     """

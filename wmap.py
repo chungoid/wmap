@@ -2,9 +2,10 @@
 import os
 import argparse
 from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH
-from utils.capture import capture_packets
+from utils.parsing import parse_capture_file, get_latest_capture_file
 from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps, set_wpasec_key
 from tools.scapy_parser import parse_scapy_live
+
 
 def handle_wpa_sec_actions(args, db_path):
     """Handle WPA-SEC related actions: upload, download, or set key."""
@@ -26,6 +27,25 @@ def handle_wpa_sec_actions(args, db_path):
     return False
 
 
+def parse_previous_captures(db_path):
+    """Parse all .pcap files in the capture directory into the database."""
+    capture_dir = CONFIG["capture_dir"]
+    files = [
+        os.path.join(capture_dir, f)
+        for f in os.listdir(capture_dir)
+        if f.endswith(".pcap") or f.endswith(".pcapng")
+    ]
+
+    if not files:
+        print("No capture files found to parse.")
+        return
+
+    for file in files:
+        print(f"Parsing {file} into the database...")
+        parse_capture_file("scapy", file, db_path)
+    print("All previous captures have been parsed.")
+
+
 def main():
     ensure_directories_and_database()
 
@@ -39,6 +59,7 @@ def main():
                         help="Download potfile from WPA-SEC (default path if no path provided).")
     parser.add_argument("--set-key", type=str, help="Set the WPA-SEC key in the database.")
     parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
+    parser.add_argument("--parse-prev", action="store_true", help="Parse all previously captured .pcap files.")
     parser.add_argument("tool_args", nargs=argparse.REMAINDER,
                         help="All additional arguments for the tool (e.g., interface, output options).")
 
@@ -50,25 +71,31 @@ def main():
     if handle_wpa_sec_actions(args, db_path):
         return
 
+    # Parse previous captures
+    if args.parse_prev:
+        parse_previous_captures(db_path)
+        return
+
     # Ensure tool-specific arguments are provided
     if not args.tool_args:
         parser.error(f"Tool '{args.tool}' requires additional arguments (e.g., interface and output options).")
 
+    # Determine the capture file for live parsing
     capture_dir = CONFIG["capture_dir"]
-    os.makedirs(capture_dir, exist_ok=True)
+    latest_capture_file = get_latest_capture_file(capture_dir)
 
-    # Generate output path dynamically
-    output_path = os.path.join(capture_dir, f"{args.tool}_capture.pcap")
-    if "-w" not in args.tool_args and "--write" not in args.tool_args:
-        args.tool_args += ["-w", output_path]
+    # Run live parsing with Scapy
+    if args.tool and latest_capture_file:
+        print(f"Starting live parsing for {latest_capture_file}...")
+        parse_scapy_live(latest_capture_file, db_path)
 
-    # Start live parsing in parallel
-    print(f"Starting capture with {args.tool}...")
-    capture_packets(
-        args.tool,
-        args.tool_args,
-        live_parser=lambda: parse_scapy_live(output_path, db_path)
-    )
+    # Launch Flask web server if not disabled
+    if not args.no_webserver:
+        from web.app import app
+        host = CONFIG.get("web_server_host", "0.0.0.0")
+        port = CONFIG.get("web_server_port", 8080)
+        print(f"Starting web server on {host}:{port}...")
+        app.run(host=host, port=port)
 
 
 if __name__ == "__main__":

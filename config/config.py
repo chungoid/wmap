@@ -1,8 +1,5 @@
 import os
-
-# USER OPTIONS
-HOSTADDR = "0.0.0.0"  # Default address for /web/app.py
-PORT = 8080  # Default port for /web/app.py
+from tools.init_db import initialize_database
 
 # Base directory of the project
 BASE_DIR = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
@@ -13,13 +10,15 @@ CONFIG = {
     "db_dir": os.path.join(BASE_DIR, "database"),
     "capture_dir": os.path.join(BASE_DIR, "capture"),
     "tools_dir": os.path.join(BASE_DIR, "tools"),
+    "tests_dir": os.path.join(BASE_DIR, "tests"),
     "web_dir": os.path.join(BASE_DIR, "web"),
+    "pcap_file": None,  # Dynamically updated during capture
 }
 
 # Web Server Settings
 WEB_SERVER = {
-    "host": HOSTADDR,  # Default to all interfaces
-    "port": PORT       # Default port
+    "host": "0.0.0.0",  # Default to all interfaces
+    "port": 8080        # Default port
 }
 
 # Default database path
@@ -30,31 +29,24 @@ LOG_FILES = {
     "scapy_parser": os.path.join(CONFIG["log_dir"], "scapy_parser.log"),
     "tshark_parser": os.path.join(CONFIG["log_dir"], "tshark_parser.log"),
     "query_runner": os.path.join(CONFIG["log_dir"], "query_runner.log"),
+    "wrapper": os.path.join(CONFIG["log_dir"], "wrapper.log"),
 }
 
+
 def ensure_directories_and_database():
-    """Ensure necessary directories and the database are initialized."""
-    missing_dirs = []
-
-    # Check and create directories
+    """
+    Ensure necessary directories exist and initialize the database.
+    """
+    # Ensure directories
     for key, dir_path in CONFIG.items():
-        if dir_path.strip():  # Ensure valid paths
-            if not os.path.exists(dir_path):
-                missing_dirs.append(dir_path)
-                os.makedirs(dir_path, exist_ok=True)
+        if isinstance(dir_path, str) and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
+            print(f"Created missing directory: {dir_path}")
 
-    # Print a single message
-    if missing_dirs:
-        print(f"Initialized missing directories: {', '.join(missing_dirs)}")
+    # Initialize database
+    db_path = CONFIG.get("db_dir", "") + "/wmap.db"
+    if os.path.exists(db_path):
+        print("Database is already initialized.")
     else:
-        print("All required directories are already initialized.")
-
-    # Ensure database is initialized
-    db_path = DEFAULT_DB_PATH
-    if not os.path.exists(db_path):
-        from tools.init_db import initialize_database
         print("Initializing database...")
         initialize_database(db_path)
-        print(f"Database initialized at: {db_path}")
-    else:
-        print("Database is already initialized.")
