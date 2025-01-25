@@ -26,32 +26,34 @@ def determine_tool_args(tool, output, additional_args):
 
 def capture_packets(tool, additional_args):
     """Run the specified capture tool."""
-    # Force all outputs into the capture directory
-    output_arg = None
-    for i, arg in enumerate(additional_args):
-        if arg in ["-w", "--write"]:
-            output_arg = i + 1
-            break
-
-    if output_arg and output_arg < len(additional_args):
-        # Adjust the output file path
-        original_output = additional_args[output_arg]
-        if not os.path.isabs(original_output):  # If relative path
-            new_output = os.path.join(CONFIG["capture_dir"], original_output)
-        else:  # If absolute path
+    # Force output redirection for tools that support it
+    redirected_args = []
+    i = 0
+    while i < len(additional_args):
+        if additional_args[i] in ["-w", "--write"] and i + 1 < len(additional_args):
+            original_output = additional_args[i + 1]
+            # Redirect to capture directory
             new_output = os.path.join(CONFIG["capture_dir"], os.path.basename(original_output))
-        additional_args[output_arg] = new_output
-        print(f"Redirecting output to: {new_output}")
-    else:
-        # If no -w/--write is specified, enforce a default file in the capture directory
-        default_output = os.path.join(CONFIG["capture_dir"], f"{tool}_capture.pcap")
-        additional_args += ["-w", default_output]
-        print(f"No output file specified, defaulting to: {default_output}")
+            redirected_args += [additional_args[i], new_output]
+            print(f"Redirecting output to: {new_output}")
+            i += 2  # Skip the argument and its value
+        else:
+            redirected_args.append(additional_args[i])
+            i += 1
 
-    # Construct the command and execute it
-    print(f"Starting capture with command: {' '.join([tool] + additional_args)}")
+    # Default output redirection if none is specified
+    if "-w" not in redirected_args and "--write" not in redirected_args:
+        default_output = os.path.join(CONFIG["capture_dir"], f"{tool}_capture.pcap")
+        redirected_args += ["-w", default_output]
+        print(f"No output specified, defaulting to: {default_output}")
+
+    # Construct the full command
+    command = [tool] + redirected_args
+    print(f"Starting capture with command: {' '.join(command)}")
+
+    # Execute the command
     try:
-        result = subprocess.run([tool] + additional_args, check=True, capture_output=True, text=True)
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
         print(f"Capture completed with {tool}.")
         if result.stdout:
             print(result.stdout)
