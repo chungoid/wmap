@@ -33,26 +33,19 @@ To capture packets and parse them into the database:
 ./wmap.py wlan0 -t hcxdumptool -o capture.pcap --parser scapy
 ```
 
-WPA-SEC Integration
-Upload a Capture File
-
-To upload a specific PCAP file to WPA-SEC:
+WPA-SEC Integration & Capture File Handling:
 ```
-./wmap.py -u /path/to/capture.pcap
+./wmap.py -u # upload all captures from wmap/captures/ 
+
+./wmap.py -u /path/to/capture.pcap # upload a specific capture
+
+./wmap .py -d # download wpa-sec pot to wmap/captures/ 
+
+./wmap.py -d /path/to/save/potfile.pot
 ```
 To upload all unmarked PCAP files in the capture directory:
 ```
-./wmap.py -u
-```
-Download Potfile
 
-To download a potfile from WPA-SEC:
-```
-./wmap.py -d
-```
-Specify a custom download location:
-```
-./wmap.py -d /path/to/save/potfile.pot
 ```
 ## Features
 
