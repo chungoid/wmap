@@ -11,7 +11,7 @@ capture_dir = CONFIG["capture_dir"]
 # Define paths to the original tools
 TOOL_PATHS = {
     "hcxdumptool": "/usr/bin/hcxdumptool",
-    "airodump-ng": "/usr/bin/airodump-ng",
+    "airodump-ng": "/usr/sbin/airodump-ng",
     "tshark": "/usr/bin/tshark",
     "tcpdump": "/usr/sbin/tcpdump",
     "dumpcap": "/usr/bin/dumpcap",
