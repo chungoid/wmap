@@ -5,7 +5,7 @@ from config.config import CONFIG, ensure_directories, DEFAULT_DB_PATH
 from tools.init_db import initialize_database
 from utils.capture import prepare_output_directory, capture_packets, determine_tool_args
 from utils.parsing import parse_capture_file
-from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps
+from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps, set_wpasec_key
 
 
 def initialize_database_if_needed(db_path):
@@ -17,17 +17,21 @@ def initialize_database_if_needed(db_path):
         print(f"Database already exists at {db_path}.")
 
 
-def handle_wpa_sec_actions(args):
-    """Handle WPA-SEC related actions: upload or download."""
+def handle_wpa_sec_actions(args, db_path):
+    """Handle WPA-SEC related actions: upload, download, or set key."""
+    if args.set_key:
+        set_wpasec_key("wpa_sec_key", args.set_key, db_path)
+        return True
+
     if args.upload:
         if args.upload == CONFIG["capture_dir"]:
-            upload_all_pcaps()
+            upload_all_pcaps(db_path)
         else:
-            upload_pcap(args.upload)
+            upload_pcap(args.upload, db_path)
         return True
 
     if args.download:
-        download_potfile(args.download)
+        download_potfile(args.download, db_path)
         return True
 
     return False
@@ -35,8 +39,11 @@ def handle_wpa_sec_actions(args):
 
 def validate_capture_arguments(args, parser):
     """Ensure required arguments for capture and parsing are provided."""
-    if not args.interface or not args.tool or not args.output:
-        parser.error("interface, -t/--tool, and -o/--output are required for capture and parsing.")
+    if not args.interface or not args.tool:
+        parser.error("interface and -t/--tool are required for capture.")
+
+    if args.tool in ["tshark", "airodump-ng", "tcpdump", "dumpcap"] and not args.output:
+        parser.error(f"Tool '{args.tool}' requires an output file specified with -o/--output.")
 
 
 def main():
@@ -55,28 +62,28 @@ def main():
                         help="Upload a specific PCAP file or all unmarked files in the capture directory.")
     parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
                         help="Download potfile from WPA-SEC (default path if no path provided).")
+    parser.add_argument("--set-key", type=str, help="Set the WPA-SEC key in the database.")
     parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
 
     args = parser.parse_args()
 
-    # Handle WPA-SEC actions
-    if handle_wpa_sec_actions(args):
-        return
-
-    # Initialize database
     db_path = DEFAULT_DB_PATH
     initialize_database_if_needed(db_path)
 
+    # Handle WPA-SEC actions
+    if handle_wpa_sec_actions(args, db_path):
+        return
+
+    # Validate capture-related arguments
     if not args.no_webserver:
-        # Validate capture-related arguments
-        if not args.interface or not args.tool:
-            parser.error("interface and -t/--tool are required for capture.")
+        validate_capture_arguments(args, parser)
 
-        # Prepare output directory if --output is specified
-        if args.output:
-            prepare_output_directory(args.output)
+    # Prepare output directory if needed
+    if args.output:
+        prepare_output_directory(args.output)
 
-        # Build additional arguments
+    # Capture and parse packets if web server is not disabled
+    if not args.no_webserver:
         additional_args = args.args if args.args else []
         if args.output and args.tool in ["tshark", "airodump-ng", "tcpdump", "dumpcap"]:
             additional_args = determine_tool_args(args.tool, args.output, additional_args)

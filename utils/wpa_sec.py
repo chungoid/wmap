@@ -1,13 +1,15 @@
 import os
 import requests
-from config.config import CONFIG
+import sqlite3
+
+from config.config import CONFIG, DEFAULT_DB_PATH
 
 
-def download_potfile(output_file):
+def download_potfile(output_file, db_path=DEFAULT_DB_PATH):
     """Download the potfile from WPA-SEC."""
-    key = CONFIG.get("wpa_sec_key")
+    key = get_wpasec_key("wpa_sec_key", db_path)
     if not key:
-        print("Error: WPA-SEC key not configured in config.py.")
+        print("Error: WPA-SEC key not set in the database. Use --set-key to configure it.")
         return
 
     url = "https://wpa-sec.stanev.org/?api&dl=1"
@@ -26,11 +28,11 @@ def download_potfile(output_file):
         print(f"Error downloading potfile: {e}")
 
 
-def upload_pcap(pcap_file):
+def upload_pcap(pcap_file, db_path=DEFAULT_DB_PATH):
     """Upload a PCAP file to WPA-SEC."""
-    key = CONFIG.get("wpa_sec_key")
+    key = get_wpasec_key("wpa_sec_key", db_path)
     if not key:
-        print("Error: WPA-SEC key not configured in config.py.")
+        print("Error: WPA-SEC key not set in the database. Use --set-key to configure it.")
         return
 
     url = "https://wpa-sec.stanev.org/?api&upload"
@@ -47,11 +49,11 @@ def upload_pcap(pcap_file):
         print(f"Error uploading PCAP file: {e}")
 
 
-def upload_all_pcaps():
+def upload_all_pcaps(db_path=DEFAULT_DB_PATH):
     """Automatically upload all PCAP files from the capture directory."""
-    key = CONFIG.get("wpa_sec_key")
+    key = get_wpasec_key("wpa_sec_key", db_path)
     if not key:
-        print("Error: WPA-SEC key not configured in config.py.")
+        print("Error: WPA-SEC key not set in the database. Use --set-key to configure it.")
         return
 
     capture_dir = CONFIG["capture_dir"]
@@ -66,5 +68,26 @@ def upload_all_pcaps():
             print(f"Skipping non-PCAP file: {filename}")
             continue
 
-        upload_pcap(filepath)
+        upload_pcap(filepath, db_path)
         os.rename(filepath, f"{filepath}.uploaded")
+
+
+def get_wpasec_key(key, db_path=DEFAULT_DB_PATH):
+    """Retrieve a setting value from the database."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+
+def set_wpasec_key(key, value, db_path=DEFAULT_DB_PATH):
+    """Update or insert a setting in the database."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+    conn.commit()
+    conn.close()
+    print(f"Set {key} to {value} in the database.")
+

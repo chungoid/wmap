@@ -16,7 +16,6 @@ CONFIG = {
     "tools_dir": os.path.join(BASE_DIR, "tools"),
     "tests_dir": os.path.join(BASE_DIR, "tests"),
     "web_dir": os.path.join(BASE_DIR, "web"),
-    "wpa_sec_key": wpasec_stanev_org_key,  # Placeholder for the user's WPA-SEC key
 }
 
 # Web Server Settings
@@ -37,6 +36,7 @@ LOG_FILES = {
 
 def ensure_directories():
     """Create necessary directories based on CONFIG."""
-    for dir_path in CONFIG.values():
-        if isinstance(dir_path, str):
+    for key, dir_path in CONFIG.items():
+        if os.path.isdir(dir_path):  # Ensure valid directories
+            print(f"Ensuring directory exists for {key}: {dir_path}")
             os.makedirs(dir_path, exist_ok=True)

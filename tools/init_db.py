@@ -81,6 +81,14 @@ def initialize_database(dbpath):
     );
     """)
 
+    # Settings Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    );
+    """)
+
     conn.commit()
     conn.close()
     print(f"Database initialized successfully at '{dbpath}'.")
