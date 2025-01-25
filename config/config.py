@@ -1,7 +1,7 @@
 import os
 
 # define your key from wpa-sec.stanev.org
-wpasec_stanev_org_key = None
+wpasec_stanev_org_key = ""
 
 # Base directory of the project
 BASE_DIR = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
