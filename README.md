@@ -49,7 +49,7 @@ WPA-SEC Integration & Capture File Handling:
     Supports multiple capture tools: hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap.
     Parses captured data using Scapy (default) or TShark.
     Uploads and downloads data with WPA-SEC integration.
-    Modular and extensible architecture.
+    Modular and extensible.
 
 ## Directory Structure
 
