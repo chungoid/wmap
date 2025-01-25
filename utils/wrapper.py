@@ -3,9 +3,9 @@ import os
 import sys
 import subprocess
 
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
+sys.path.insert(0, BASE_DIR)
 from config.config import CONFIG
-
-# Define the capture directory
 capture_dir = CONFIG["capture_dir"]
 
 # Define paths to the original tools
