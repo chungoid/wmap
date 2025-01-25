@@ -1,6 +1,9 @@
 import os
+import sys
 import subprocess
 from config.config import CONFIG
+
+WRAPPER_PATH = os.path.join(os.path.dirname(__file__), "wrapper.py")
 
 def prepare_output_directory(output_path):
     """Ensure the output directory exists."""
@@ -25,35 +28,21 @@ def determine_tool_args(tool, output, additional_args):
 
 
 def capture_packets(tool, additional_args):
-    """Run the specified capture tool."""
-    redirected_args = []
-    i = 0
-    while i < len(additional_args):
-        if additional_args[i] in ["-w", "--write"] and i + 1 < len(additional_args):
-            # Redirect output to the capture directory
-            original_output = additional_args[i + 1]
-            new_output = os.path.join(CONFIG["capture_dir"], os.path.basename(original_output))
-            redirected_args += [additional_args[i], new_output]
-            print(f"Redirecting output to: {new_output}")
-            i += 2
-        else:
-            redirected_args.append(additional_args[i])
-            i += 1
+    """
+    Run the specified capture tool using the wrapper script.
 
-    # If no output argument is found, provide a default
-    if "-w" not in redirected_args and "--write" not in redirected_args:
-        default_output = os.path.join(CONFIG["capture_dir"], f"{tool}_capture.pcap")
-        redirected_args += ["-w", default_output]
-        print(f"No output specified, defaulting to: {default_output}")
+    :param tool: The capture tool to run (e.g., hcxdumptool, airodump-ng, etc.).
+    :param additional_args: List of additional arguments to pass to the tool.
+    """
+    if not os.path.exists(WRAPPER_PATH):
+        raise FileNotFoundError(f"Wrapper script not found at {WRAPPER_PATH}")
 
-    # Prepend tool name to the full command
-    command = [tool] + redirected_args
+    command = ["python3", WRAPPER_PATH, tool] + additional_args
     print(f"Starting capture with command: {' '.join(command)}")
 
     try:
-        # Execute the command
         result = subprocess.run(command, check=True, capture_output=True, text=True)
-        print(f"Capture completed with {tool}.")
+        print("Capture completed successfully.")
         if result.stdout:
             print(result.stdout)
         if result.stderr:
@@ -62,4 +51,4 @@ def capture_packets(tool, additional_args):
         print(f"Error during capture with {tool}: {e}")
         if e.stderr:
             print(f"Tool output:\n{e.stderr}")
-        exit(1)
+        exit(e.returncode)

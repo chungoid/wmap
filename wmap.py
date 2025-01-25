@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
+##!/usr/bin/env python3
 import os
 import argparse
 from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH
-from utils.capture import capture_packets, determine_tool_args
+from utils.capture import capture_packets
 from utils.parsing import parse_capture_file
 from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps, set_wpasec_key
 
@@ -25,15 +25,6 @@ def handle_wpa_sec_actions(args, db_path):
         return True
 
     return False
-
-
-def validate_capture_arguments(args, parser):
-    """Ensure required arguments for capture and parsing are provided."""
-    if not args.interface or not args.tool:
-        parser.error("interface and -t/--tool are required for capture.")
-
-    if args.tool in ["tshark", "airodump-ng", "tcpdump", "dumpcap"] and not args.output:
-        parser.error(f"Tool '{args.tool}' requires an output file specified with -o/--output.")
 
 
 def main():
@@ -66,7 +57,7 @@ def main():
     if not args.tool_args:
         parser.error(f"Tool '{args.tool}' requires additional arguments (e.g., interface and output options).")
 
-    # Rewrite output path if specified
+    # Rewrite output path if specified in the arguments
     capture_dir = CONFIG["capture_dir"]
     os.makedirs(capture_dir, exist_ok=True)
 
@@ -80,7 +71,7 @@ def main():
                 output_path = os.path.join(capture_dir, filename)
                 additional_args[i + 1] = output_path
 
-    # Run packet capture
+    # Run packet capture via the wrapper
     print(f"Starting capture with {args.tool}...")
     capture_packets(args.tool, additional_args)
 
