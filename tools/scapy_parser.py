@@ -28,37 +28,40 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
         logging.info(f"Starting live parsing of packets from file: {file_path}")
         processed_packets = 0  # Track how many packets have been processed
 
-        # Wait until the file exists
+        # Wait until the file exists and is writable
         while not os.path.exists(file_path):
             logging.info(f"Waiting for capture file '{file_path}' to be created...")
-            time.sleep(1)
+            time.sleep(check_interval)
 
         while True:
-            with RawPcapReader(file_path) as pcap_reader:
-                for idx, (packet, _) in enumerate(pcap_reader):
-                    if idx < processed_packets:
-                        continue  # Skip already processed packets
+            try:
+                with RawPcapReader(file_path) as pcap_reader:
+                    for idx, (packet, _) in enumerate(pcap_reader):
+                        if idx < processed_packets:
+                            continue  # Skip already processed packets
 
-                    if not validate_packet(packet):
-                        logging.warning(f"Skipping invalid packet at index {idx}.")
-                        continue
+                        if not validate_packet(packet):
+                            logging.warning(f"Skipping invalid packet at index {idx}.")
+                            continue
 
-                    try:
                         process_packet(packet, cursor)
-                    except Exception as e:
-                        logging.error(f"Error processing packet at index {idx}: {e}")
+                        processed_packets += 1
 
-                    processed_packets += 1
-
-                    # Commit every 100 packets
-                    if processed_packets % 100 == 0:
-                        conn.commit()
-                        logging.info(f"Committed 100 packets (processed {processed_packets} total).")
+                        # Commit every 100 packets
+                        if processed_packets % 100 == 0:
+                            conn.commit()
+                            logging.info(f"Committed 100 packets (processed {processed_packets} total).")
+            except EOFError:
+                # File is being written; wait before attempting to read again
+                logging.debug("Reached end of file; waiting for more data...")
+                time.sleep(check_interval)
+            except Exception as e:
+                logging.error(f"Unexpected error during live parsing: {e}")
 
             # Check if capture is still ongoing
             if not is_capture_active(file_path):
+                logging.info("Capture appears to have stopped.")
                 break
-            time.sleep(check_interval)
 
     except Exception as e:
         logging.error(f"Error during live parsing: {e}")
@@ -104,7 +107,9 @@ def is_capture_active(file_path):
         initial_size = os.path.getsize(file_path)
         time.sleep(1)  # Check file size after a short delay
         current_size = os.path.getsize(file_path)
-        return initial_size != current_size
+        is_active = initial_size != current_size
+        logging.debug(f"File '{file_path}' size changed: {initial_size} -> {current_size}. Active: {is_active}")
+        return is_active
     except Exception as e:
         logging.error(f"Error monitoring file '{file_path}': {e}")
         return False
