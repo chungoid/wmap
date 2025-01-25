@@ -48,7 +48,14 @@ def parse_previous_captures(db_path):
 
 
 def main():
-    ensure_directories_and_database()
+    # Ensure required directories and database are initialized
+    try:
+        print("Initializing directories and database...")
+        ensure_directories_and_database()
+        print("Initialization completed.")
+    except Exception as e:
+        print(f"Error during initialization: {e}")
+        return
 
     parser = argparse.ArgumentParser(description="Wi-Fi packet capture and parsing tool.")
     parser.add_argument("-t", "--tool", type=str, required=True,

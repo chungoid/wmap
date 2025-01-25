@@ -34,19 +34,17 @@ LOG_FILES = {
 
 
 def ensure_directories_and_database():
-    """
-    Ensure necessary directories exist and initialize the database.
-    """
-    # Ensure directories
-    for key, dir_path in CONFIG.items():
-        if isinstance(dir_path, str) and not os.path.exists(dir_path):
-            os.makedirs(dir_path, exist_ok=True)
-            print(f"Created missing directory: {dir_path}")
+    """Ensure necessary directories and database are initialized."""
+    try:
+        print("Checking directories...")
+        for key, dir_path in CONFIG.items():
+            if key.endswith("_dir") and dir_path:
+                os.makedirs(dir_path, exist_ok=True)
+                print(f"Directory ensured: {dir_path}")
 
-    # Initialize database
-    db_path = CONFIG.get("db_dir", "") + "/wmap.db"
-    if os.path.exists(db_path):
-        print("Database is already initialized.")
-    else:
-        print("Initializing database...")
-        initialize_database(db_path)
+        print(f"Ensuring database at {DEFAULT_DB_PATH}...")
+        initialize_database(DEFAULT_DB_PATH)
+        print("Database initialization complete.")
+    except Exception as e:
+        print(f"Error ensuring directories and database: {e}")
+        raise
