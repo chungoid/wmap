@@ -68,6 +68,19 @@ def initialize_database(dbpath):
     );
     """)
 
+    # WPA-SEC Results Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS wpa_sec_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bssid TEXT NOT NULL,
+        source_mac TEXT,
+        ssid TEXT,
+        password TEXT,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(bssid, ssid) ON CONFLICT REPLACE
+    );
+    """)
+
     conn.commit()
     conn.close()
     print(f"Database initialized successfully at '{dbpath}'.")

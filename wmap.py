@@ -1,122 +1,20 @@
 #!/usr/bin/env python3
 import os
-import subprocess
 import argparse
-import requests
 from config.config import CONFIG, ensure_directories
 from tools.init_db import initialize_database
-from tools.scapy_parser import parse_scapy_to_db
-from tools.tshark_parser import parse_tshark_to_db
+from utils.capture import prepare_output_directory, capture_packets, determine_tool_args
+from utils.parsing import parse_capture_file
+from utils.wpa_sec import download_potfile, upload_pcap, upload_all_pcaps
 
 
 def initialize_database_if_needed(db_path):
+    """Ensure the database is initialized."""
     if not os.path.exists(db_path):
         print(f"Initializing database at {db_path}...")
         initialize_database(db_path)
     else:
         print(f"Database already exists at {db_path}.")
-
-
-def prepare_output_directory(output_path):
-    output_dir = os.path.dirname(output_path)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-
-
-def determine_tool_args(tool, output, additional_args):
-    if tool == "hcxdumptool":
-        additional_args += ["-o", output]
-    elif tool == "tshark":
-        additional_args += ["-w", output]
-    elif tool == "airodump-ng":
-        additional_args += ["--write", os.path.splitext(output)[0]]
-    elif tool == "tcpdump":
-        additional_args += ["-w", output]
-    elif tool == "dumpcap":
-        additional_args += ["-w", output]
-    return additional_args
-
-
-def capture_packets(tool, interface, output, additional_args):
-    print(f"Starting capture with {tool} on {interface}...")
-    command = [tool, "-i", interface] + additional_args
-    try:
-        subprocess.run(command, check=True)
-        print(f"Capture completed with {tool}.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error during capture with {tool}: {e}")
-        if e.stderr:
-            print(f"Tool output:\n{e.stderr.decode('utf-8')}")
-        exit(1)
-
-
-def parse_capture_file(parser, output, db_path):
-    print(f"Parsing capture file '{output}' into database using {parser} parser...")
-    if parser == "scapy":
-        parse_scapy_to_db(output, db_path)
-    elif parser == "tshark":
-        parse_tshark_to_db(output, db_path)
-    print("Parsing completed successfully.")
-
-
-def download_potfile(output_file):
-    key = CONFIG.get("wpa_sec_key")
-    if not key:
-        print("Error: WPA-SEC key not configured in config.py.")
-        return
-
-    url = "https://wpa-sec.stanev.org/?api&dl=1"
-    headers = {"Cookie": f"key={key}"}
-
-    try:
-        print("Downloading potfile from WPA-SEC...")
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-
-        with open(output_file, "wb") as f:
-            f.write(response.content)
-
-        print(f"Potfile downloaded successfully and saved to {output_file}.")
-    except requests.RequestException as e:
-        print(f"Error downloading potfile: {e}")
-
-
-def upload_pcap(pcap_file):
-    key = CONFIG.get("wpa_sec_key")
-    if not key:
-        print("Error: WPA-SEC key not configured in config.py.")
-        return
-
-    url = "https://wpa-sec.stanev.org/?api&upload"
-    headers = {"Cookie": f"key={key}"}
-
-    try:
-        print(f"Uploading {pcap_file} to WPA-SEC...")
-        with open(pcap_file, "rb") as file:
-            files = {"file": file}
-            response = requests.post(url, headers=headers, files=files)
-            response.raise_for_status()
-        print(f"Upload successful: {response.text}")
-    except requests.RequestException as e:
-        print(f"Error uploading PCAP file: {e}")
-
-
-def upload_all_pcaps():
-    key = CONFIG.get("wpa_sec_key")
-    if not key:
-        print("Error: WPA-SEC key not configured in config.py.")
-        return
-
-    capture_dir = CONFIG["capture_dir"]
-    for filename in os.listdir(capture_dir):
-        filepath = os.path.join(capture_dir, filename)
-        if filename.endswith(".uploaded"):
-            continue
-        if not filename.endswith((".pcap", ".pcapng", ".cap")):
-            continue
-
-        upload_pcap(filepath)
-        os.rename(filepath, f"{filepath}.uploaded")
 
 
 def main():
@@ -154,7 +52,7 @@ def main():
     if not args.interface or not args.tool or not args.output:
         parser.error("interface, -t/--tool, and -o/--output are required for capture and parsing.")
 
-    # Initialize database and directories
+    # Initialize database and prepare output directory
     db_path = os.path.join(CONFIG["db_dir"], "wmap.db")
     initialize_database_if_needed(db_path)
     prepare_output_directory(args.output)
@@ -166,6 +64,9 @@ def main():
 
     # Parse packets into the database
     parse_capture_file(args.parser, args.output, db_path)
+
+    print("Capture and parsing completed successfully.")
+
 
 if __name__ == "__main__":
     main()
