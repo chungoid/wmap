@@ -11,19 +11,18 @@ WMAP is a modular tool for capturing, parsing, and analyzing Wi-Fi traffic, with
    ```
 
 2. **Install Dependencies:**: (not needed on kali)
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt 
-```
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt 
+   ```
 
 ## Configuration
 
 Edit the config/config.py file to set up default directories and your WPA-SEC key:
-
-## SET YOUR WPA-SEC KEY HERE (create at wpa-sec.stanev.org)
-wpasec_stanev_org_key = "your_wpa_sec_key"
-
+```
+wpasec_stanev_org_key = "your_wpa_sec_key" # (create at wpa-sec.stanev.org)
+```
 
 ## Usage
 Capture Packets and Parse
