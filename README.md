@@ -10,7 +10,7 @@ WMAP is a modular tool for capturing, parsing, and analyzing Wireless Traffic.
    cd wmap
    ```
 
-2. **Install Dependencies:**: (not needed on kali)
+2. **Install Dependencies:**: 
    ```bash
    python3 -m venv .venv
    source .venv/bin/activate
