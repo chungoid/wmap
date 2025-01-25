@@ -26,14 +26,18 @@ def determine_tool_args(tool, output, additional_args):
 
 def capture_packets(tool, additional_args):
     """Run the specified capture tool."""
-    # Ensure the output file is in the capture directory
+    # Adjust output paths to use the capture directory
     for i, arg in enumerate(additional_args):
-        if arg in ["-w", "--write"]:  # Look for the output argument
+        if arg in ["-w", "--write"]:  # Common output arguments
             output_index = i + 1
             if output_index < len(additional_args):
                 output_file = additional_args[output_index]
-                if not os.path.isabs(output_file):  # If relative path, adjust to capture_dir
-                    additional_args[output_index] = os.path.join(CONFIG["capture_dir"], output_file)
+                if not os.path.isabs(output_file):  # If not absolute path
+                    new_path = os.path.join(CONFIG["capture_dir"], output_file)
+                    additional_args[output_index] = new_path
+                    print(f"Adjusted output file path to: {new_path}")
+
+    # Construct the command and execute it
     print(f"Starting capture with {tool}...")
     command = [tool] + additional_args
     try:
