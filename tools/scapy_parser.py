@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11ProbeReq, Dot11Deauth
-from scapy.utils import PcapReader, RawPcapReader
+from scapy.utils import RawPcapReader
 from config.config import LOG_FILES, DEFAULT_DB_PATH
 
 # Setup logging
@@ -15,7 +15,6 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
 
 def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
     """
@@ -40,7 +39,15 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
                     if idx < processed_packets:
                         continue  # Skip already processed packets
 
-                    process_packet(packet, cursor)
+                    if not validate_packet(packet):
+                        logging.warning(f"Skipping invalid packet at index {idx}.")
+                        continue
+
+                    try:
+                        process_packet(packet, cursor)
+                    except Exception as e:
+                        logging.error(f"Error processing packet at index {idx}: {e}")
+
                     processed_packets += 1
 
                     # Commit every 100 packets
@@ -59,6 +66,34 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
         conn.commit()
         conn.close()
         logging.info(f"Live parsing completed for file: {file_path}")
+
+
+def validate_packet(packet):
+    """
+    Validate packet data types and ensure compatibility with the database schema.
+    """
+    try:
+        ts_sec = int(packet.time)
+        ts_usec = int((packet.time - ts_sec) * 1_000_000)
+        source_mac = packet.addr2 if packet.haslayer(Dot11) else None
+        dest_mac = packet.addr1 if packet.haslayer(Dot11) else None
+        trans_mac = packet.addr3 if packet.haslayer(Dot11) else None
+        packet_len = len(packet)
+
+        # Ensure required fields are not None and have valid types
+        if not isinstance(ts_sec, int) or not isinstance(ts_usec, int) or not isinstance(packet_len, int):
+            raise ValueError("Invalid packet metadata types.")
+        if source_mac and not isinstance(source_mac, str):
+            raise ValueError("Invalid source_mac type.")
+        if dest_mac and not isinstance(dest_mac, str):
+            raise ValueError("Invalid dest_mac type.")
+        if trans_mac and not isinstance(trans_mac, str):
+            raise ValueError("Invalid trans_mac type.")
+
+        return True
+    except Exception as e:
+        logging.error(f"Packet validation failed: {e}")
+        return False
 
 
 def is_capture_active(file_path):
