@@ -43,8 +43,6 @@ def main():
     parser.add_argument("-t", "--tool", type=str, required=True,
                         choices=["hcxdumptool", "tshark", "airodump-ng", "tcpdump", "dumpcap"],
                         help="Capture tool to use (e.g., hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap).")
-    parser.add_argument("tool_args", nargs=argparse.REMAINDER,
-                        help="Arguments for the capture tool (e.g., interface, output options, etc.).")
     parser.add_argument("--parser", type=str, choices=["scapy", "tshark"], default="scapy",
                         help="Parser to use for processing the capture (default: scapy).")
     parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"],
@@ -53,6 +51,8 @@ def main():
                         help="Download potfile from WPA-SEC (default path if no path provided).")
     parser.add_argument("--set-key", type=str, help="Set the WPA-SEC key in the database.")
     parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
+    parser.add_argument("tool_args", nargs=argparse.REMAINDER,
+                        help="All additional arguments for the tool (e.g., interface, output options).")
 
     args = parser.parse_args()
 
@@ -62,7 +62,7 @@ def main():
     if handle_wpa_sec_actions(args, db_path):
         return
 
-    # Ensure the tool-specific arguments are provided
+    # Ensure tool-specific arguments are provided
     if not args.tool_args:
         parser.error(f"Tool '{args.tool}' requires additional arguments (e.g., interface and output options).")
 
