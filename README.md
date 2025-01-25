@@ -1,6 +1,6 @@
 # WMAP: Wi-Fi Monitoring and Analysis Platform
 
-WMAP is a modular tool for capturing, parsing, and analyzing Wi-Fi traffic, with support for WPA-SEC integration.
+WMAP is a modular tool for capturing, parsing, and analyzing Wireless Traffic.
 
 ## Installation
 
@@ -47,8 +47,9 @@ WPA-SEC Integration & Capture File Handling:
 
     Supports multiple capture tools: hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap.
     Parses captured data using Scapy (default) or TShark.
+    Stores parsed data using a SQLite database.
     Uploads and downloads data with WPA-SEC integration.
-    Modular and extensible.
+    Modular and extensible SQLite queries maintained in /tools/query_runner.py
 
 ## Directory Structure
 
