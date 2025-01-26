@@ -180,32 +180,35 @@ def is_capture_active(file_path):
 def process_packet(packet, cursor):
     """Process a single packet and insert data into the database."""
     try:
+        # Extract metadata
         ts_sec = int(packet.time)
         ts_usec = int((packet.time - ts_sec) * 1_000_000)
-        source_mac = packet.addr2 if packet.haslayer(Dot11) else None
-        dest_mac = packet.addr1 if packet.haslayer(Dot11) else None
-        trans_mac = packet.addr3 if packet.haslayer(Dot11) else None
+        source_mac = packet.addr2 if packet.haslayer(Dot11) and is_valid_mac(packet.addr2) else None
+        dest_mac = packet.addr1 if packet.haslayer(Dot11) and is_valid_mac(packet.addr1) else None
+        trans_mac = packet.addr3 if packet.haslayer(Dot11) and is_valid_mac(packet.addr3) else None
         packet_len = len(packet)
 
+        # Radiotap fields
         signal = getattr(packet, 'dBm_AntSignal', None)
-        signal = int(signal) if signal is not None else None
+        signal = int(signal) if signal is not None and isinstance(signal, (int, float)) else None
 
         phyname = "802.11"
         freq = getattr(packet, 'ChannelFrequency', None)
-        channel = None
+        channel = getattr(packet, 'Channel', None)
         dlt = "802.11"
         tags = None
         datarate = None
 
+        # Layer-specific processing
         if packet.haslayer(Dot11Beacon):
-            ssid = packet.info.decode("utf-8") if getattr(packet, "info", None) else "Hidden"
+            ssid = packet.info.decode("utf-8", errors="ignore") if getattr(packet, "info", None) else "Hidden"
             cursor.execute("""
             INSERT INTO beacons (id, ssid, encryption, capabilities, beacon_interval)
             VALUES (NULL, ?, ?, ?, ?)
             """, (ssid, "WPA2-PSK", "HT20", 100))
 
         elif packet.haslayer(Dot11ProbeReq):
-            ssid = packet.info.decode("utf-8") if getattr(packet, "info", None) else "Wildcard"
+            ssid = packet.info.decode("utf-8", errors="ignore") if getattr(packet, "info", None) else "Wildcard"
             cursor.execute("""
             INSERT INTO probes (id, ssid, is_response)
             VALUES (NULL, ?, 0)
@@ -218,6 +221,7 @@ def process_packet(packet, cursor):
             VALUES (NULL, ?)
             """, (reason_code,))
 
+        # Insert into packets table
         cursor.execute("""
         INSERT INTO packets (
             ts_sec, ts_usec, phyname, source_mac, dest_mac, trans_mac,
@@ -228,5 +232,12 @@ def process_packet(packet, cursor):
 
         logging.debug(f"Inserted packet with ts_sec={ts_sec}, source_mac={source_mac}, signal={signal}")
 
+    except sqlite3.Error as e:
+        logging.error(f"Database error inserting packet: {e}")
     except Exception as e:
-        logging.error(f"Error inserting packet into database: {e}")
+        logging.error(f"Unexpected error processing packet: {e}")
+
+
+def is_valid_mac(mac):
+    """Validate MAC address format."""
+    return mac and isinstance(mac, str) and len(mac.split(":")) == 6 and all(len(part) == 2 for part in mac.split(":"))
