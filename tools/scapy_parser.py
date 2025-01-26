@@ -4,7 +4,7 @@ import os
 import time
 from multiprocessing import Pool, cpu_count
 from scapy.utils import RawPcapReader
-from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11ProbeReq, Dot11Deauth
+from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11ProbeReq, Dot11Deauth, RadioTap
 from config.config import LOG_FILES, DEFAULT_DB_PATH
 
 # Setup logging
@@ -113,7 +113,10 @@ def parse_scapy_live(file_path, db_path=DEFAULT_DB_PATH, check_interval=1):
 def process_chunk(chunk, db_path, max_retries=5, retry_delay=0.1):
     """Process a single chunk of packets and insert them into the database."""
     processed_packets = 0
+    conn = None
+    cursor = None  # Ensure cursor is initialized to avoid unbound reference
 
+    # Attempt to connect to the database
     for attempt in range(max_retries):
         try:
             conn = sqlite3.connect(db_path, timeout=10)
@@ -126,6 +129,12 @@ def process_chunk(chunk, db_path, max_retries=5, retry_delay=0.1):
                 return processed_packets
             time.sleep(retry_delay)
 
+    # If connection failed, exit early
+    if not conn or not cursor:
+        logging.error("Unable to establish database connection. Aborting chunk processing.")
+        return processed_packets
+
+    # Process packets in the chunk
     try:
         for raw_packet in chunk:
             try:
@@ -143,12 +152,12 @@ def process_chunk(chunk, db_path, max_retries=5, retry_delay=0.1):
     except sqlite3.OperationalError as e:
         logging.error(f"Database locked during chunk processing: {e}")
     except Exception as e:
-        logging.error(f"Error processing chunk: {e}")
+        logging.error(f"Unexpected error processing chunk: {e}")
     finally:
-        conn.close()
+        if conn:
+            conn.close()  # Ensure connection is closed in all cases
 
     return processed_packets
-
 
 def validate_packet(packet):
     """Ensure the packet meets basic requirements before processing."""
@@ -180,21 +189,30 @@ def is_capture_active(file_path):
 def process_packet(packet, cursor):
     """Process a single packet and insert data into the database."""
     try:
+        # Radiotap handling
+        if packet.haslayer(RadioTap):
+            radiotap_header = packet.getlayer(RadioTap)
+            signal = getattr(radiotap_header, 'dBm_AntSignal', None)
+            freq = getattr(radiotap_header, 'ChannelFrequency', None)
+            channel = getattr(radiotap_header, 'Channel', None)
+        else:
+            signal, freq, channel = None, None, None
+
+        # Ensure Dot11 presence
+        if not packet.haslayer(Dot11):
+            logging.warning("Packet does not have a Dot11 layer. Skipping.")
+            return
+
         # Extract metadata
         ts_sec = int(packet.time)
         ts_usec = int((packet.time - ts_sec) * 1_000_000)
-        source_mac = packet.addr2 if packet.haslayer(Dot11) and is_valid_mac(packet.addr2) else None
-        dest_mac = packet.addr1 if packet.haslayer(Dot11) and is_valid_mac(packet.addr1) else None
-        trans_mac = packet.addr3 if packet.haslayer(Dot11) and is_valid_mac(packet.addr3) else None
+        source_mac = packet.addr2 if is_valid_mac(packet.addr2) else None
+        dest_mac = packet.addr1 if is_valid_mac(packet.addr1) else None
+        trans_mac = packet.addr3 if is_valid_mac(packet.addr3) else None
         packet_len = len(packet)
 
-        # Radiotap fields
-        signal = getattr(packet, 'dBm_AntSignal', None)
-        signal = int(signal) if signal is not None and isinstance(signal, (int, float)) else None
-
+        # Default fields
         phyname = "802.11"
-        freq = getattr(packet, 'ChannelFrequency', None)
-        channel = getattr(packet, 'Channel', None)
         dlt = "802.11"
         tags = None
         datarate = None
