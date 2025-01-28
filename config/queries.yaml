@@ -1,246 +1,120 @@
 queries:
   - id: "1"
     description: "List All Unique SSIDs"
-    query: "SELECT DISTINCT ssid FROM beacons;"
+    query: "SELECT DISTINCT ssid FROM devices;"
 
   - id: "2"
     description: "List All Devices"
-    query: >
-      SELECT DISTINCT source_mac FROM packets
-      UNION
-      SELECT DISTINCT dest_mac FROM packets
-      WHERE source_mac IS NOT NULL OR dest_mac IS NOT NULL;
+    query: "SELECT * FROM devices;"
 
   - id: "3"
-    description: "Count Total Packets Captured"
-    query: "SELECT COUNT(*) AS total_packets FROM packets;"
+    description: "Count Total Devices"
+    query: "SELECT COUNT(*) AS total_devices FROM devices;"
 
   - id: "4"
     description: "List All Access Points"
-    query: >
-      SELECT DISTINCT source_mac AS ap_mac, ssid, encryption
-      FROM beacons
-      JOIN packets ON beacons.id = packets.id;
+    query: "SELECT mac AS ap_mac, ssid, encryption FROM devices WHERE device_type = 'AP';"
 
   - id: "5"
-    description: "List APs by Signal Strength"
-    query: >
-      SELECT source_mac AS ap_mac, signal, ssid
-      FROM packets
-      JOIN beacons ON packets.id = beacons.id
-      WHERE signal IS NOT NULL
-      ORDER BY signal DESC;
+    description: "List Clients by Signal Strength"
+    query: "SELECT mac, ssid, signal_strength FROM clients WHERE signal_strength IS NOT NULL ORDER BY signal_strength DESC;"
 
   - id: "6"
     description: "Count Unique SSIDs Per Encryption Type"
-    query: >
-      SELECT encryption, COUNT(DISTINCT ssid) AS ssid_count
-      FROM beacons
-      GROUP BY encryption
-      ORDER BY ssid_count DESC;
+    query: "SELECT encryption, COUNT(DISTINCT ssid) AS ssid_count FROM devices GROUP BY encryption ORDER BY ssid_count DESC;"
 
   - id: "7"
-    description: "Top APs by Data Transmitted"
-    query: >
-      SELECT source_mac AS ap_mac, SUM(datarate) AS total_data_transmitted
-      FROM packets
-      GROUP BY source_mac
-      ORDER BY total_data_transmitted DESC;
+    description: "Top Clients by Signal Strength"
+    query: "SELECT mac, signal_strength FROM clients WHERE signal_strength IS NOT NULL ORDER BY signal_strength DESC;"
 
   - id: "8"
-    description: "APs with Weak or No Encryption"
-    query: >
-      SELECT source_mac AS ap_mac, ssid, encryption
-      FROM beacons
-      WHERE encryption IS NULL OR encryption = 'Open';
+    description: "Access Points with Weak or No Encryption"
+    query: "SELECT mac AS ap_mac, ssid, encryption FROM devices WHERE encryption IS NULL OR encryption = 'Open';"
 
   - id: "9"
-    description: "Devices Sending Probe Requests"
-    query: >
-      SELECT source_mac, ssid
-      FROM probes
-      JOIN packets ON probes.id = packets.id;
+    description: "Devices with Most Recent Activity"
+    query: "SELECT mac, ssid, last_seen FROM devices ORDER BY last_seen DESC;"
 
   - id: "10"
-    description: "Devices Broadcasting Probe Floods"
+    description: "Count of Clients Associated with Each Access Point"
     query: >
-      SELECT source_mac, COUNT(ssid) AS ssid_count
-      FROM probes
-      GROUP BY source_mac
-      HAVING ssid_count > 10
-      ORDER BY ssid_count DESC;
-
-  - id: "11"
-    description: "Devices Sending Deauthentication Frames"
-    query: >
-      SELECT source_mac, COUNT(*) AS deauth_count
-      FROM deauth_frames
-      JOIN packets ON deauth_frames.id = packets.id
-      GROUP BY source_mac
-      HAVING deauth_count > 50
-      ORDER BY deauth_count DESC;
-
-  - id: "12"
-    description: "Timeline of Beacon Frames"
-    query: >
-      SELECT strftime('%Y-%m-%d %H:%M', ts_sec, 'unixepoch') AS time_slot, COUNT(*) AS beacon_count
-      FROM packets
-      JOIN beacons ON packets.id = beacons.id
-      GROUP BY time_slot
-      ORDER BY time_slot;
-
-  - id: "13"
-    description: "Most Active Devices by Packet Count"
-    query: >
-      SELECT source_mac, COUNT(*) AS packet_count
-      FROM packets
-      WHERE source_mac IS NOT NULL
-      GROUP BY source_mac
-      ORDER BY packet_count DESC;
-
-  - id: "14"
-    description: "List Hidden APs"
-    query: >
-      SELECT source_mac AS ap_mac, ssid, encryption
-      FROM beacons
-      WHERE ssid IS NULL OR ssid = '';
-
-  - id: "15"
-    description: "Detect Channel Hopping Devices"
-    query: >
-      SELECT source_mac, COUNT(DISTINCT channel) AS channel_count
-      FROM packets
-      WHERE channel IS NOT NULL
-      GROUP BY source_mac
-      HAVING channel_count > 3
-      ORDER BY channel_count DESC;
-
-  - id: "16"
-    description: "APs with Most Associated Devices"
-    query: >
-      SELECT source_mac AS ap_mac, COUNT(DISTINCT dest_mac) AS client_count
-      FROM packets
-      WHERE dest_mac IS NOT NULL
-      GROUP BY source_mac
+      SELECT devices.mac AS ap_mac, devices.ssid, COUNT(clients.mac) AS client_count
+      FROM devices
+      LEFT JOIN clients ON devices.mac = clients.associated_ap
+      WHERE devices.device_type = 'AP'
+      GROUP BY devices.mac, devices.ssid
       ORDER BY client_count DESC;
 
-  - id: "17"
-    description: "Frequent SSIDs in Probe Requests"
-    query: >
-      SELECT ssid, COUNT(*) AS request_count
-      FROM probes
-      GROUP BY ssid
-      ORDER BY request_count DESC;
+  - id: "11"
+    description: "List All WPA-SEC Entries"
+    query: "SELECT bssid, ssid, password FROM wpa_sec_results;"
 
-  - id: "18"
-    description: "Signal Strength Distribution"
-    query: >
-      SELECT source_mac, AVG(signal) AS avg_signal, MIN(signal) AS min_signal, MAX(signal) AS max_signal
-      FROM packets
-      WHERE signal IS NOT NULL
-      GROUP BY source_mac
-      ORDER BY avg_signal DESC;
-
-  - id: "19"
-    description: "Packet Size Analysis"
-    query: >
-      SELECT source_mac, AVG(packet_len) AS avg_size, MAX(packet_len) AS max_size, MIN(packet_len) AS min_size
-      FROM packets
-      WHERE packet_len IS NOT NULL
-      GROUP BY source_mac
-      ORDER BY avg_size DESC;
-
-  - id: "20"
-    description: "Open Networks with High Traffic"
-    query: >
-      SELECT ssid, source_mac AS ap_mac, COUNT(*) AS packet_count
-      FROM beacons
-      JOIN packets ON beacons.id = packets.id
-      WHERE encryption IS NULL OR encryption = 'Open'
-      GROUP BY ssid, source_mac
-      ORDER BY packet_count DESC;
-
-  - id: "21"
-    description: "WPA-SEC: List All Entries"
-    query: >
-      SELECT bssid, ssid, password
-      FROM wpa_sec;
-
-  - id: "22"
-    description: "WPA-SEC: Entries with Matching SSID and Password Across BSSIDs"
+  - id: "12"
+    description: "WPA-SEC Entries with Matching SSID and Password Across BSSIDs"
     query: >
       SELECT ssid, password, COUNT(DISTINCT bssid) AS bssid_count
-      FROM wpa_sec
+      FROM wpa_sec_results
       GROUP BY ssid, password
       HAVING bssid_count > 1
       ORDER BY bssid_count DESC;
 
-  - id: "23"
-    description: "WPA-SEC: Frequently Repeated Passwords"
+  - id: "13"
+    description: "Frequently Repeated WPA-SEC Passwords"
     query: >
       SELECT password, COUNT(*) AS usage_count
-      FROM wpa_sec
+      FROM wpa_sec_results
       GROUP BY password
       ORDER BY usage_count DESC;
 
-  - id: "24"
-    description: "WPA-SEC: Networks with No SSID"
-    query: >
-      SELECT bssid, password
-      FROM wpa_sec
-      WHERE ssid IS NULL OR ssid = '';
+  - id: "14"
+    description: "WPA-SEC Networks with No SSID"
+    query: "SELECT bssid, password FROM wpa_sec_results WHERE ssid IS NULL OR ssid = '';"
 
-  - id: "25"
-    description: "Devices with Longest Active Periods"
+  - id: "15"
+    description: "List All Devices with Their Associated Access Points"
     query: >
-      SELECT source_mac, MIN(ts_sec) AS first_seen, MAX(ts_sec) AS last_seen, (MAX(ts_sec) - MIN(ts_sec)) AS active_duration
-      FROM packets
-      GROUP BY source_mac
-      ORDER BY active_duration DESC;
+      SELECT devices.ssid AS ssid, devices.mac AS ap_mac, clients.mac AS client_mac, MAX(clients.last_seen) AS last_seen
+      FROM devices
+      JOIN clients ON devices.mac = clients.associated_ap
+      WHERE devices.ssid IS NOT NULL AND devices.ssid != ''
+      GROUP BY devices.ssid, devices.mac, clients.mac
+      ORDER BY devices.ssid ASC, last_seen DESC;
 
-  - id: "26"
+  - id: "16"
     description: "Devices with the Most Frequent Channel Changes"
     query: >
-      SELECT source_mac, COUNT(DISTINCT channel) AS channel_count
-      FROM packets
+      SELECT mac, COUNT(DISTINCT channel) AS channel_count
+      FROM devices
       WHERE channel IS NOT NULL
-      GROUP BY source_mac
+      GROUP BY mac
       ORDER BY channel_count DESC;
 
-  - id: "27"
-    description: "Timeline of Data Frames"
+  - id: "17"
+    description: "Signal Strength Distribution for Devices"
     query: >
-      SELECT strftime('%Y-%m-%d %H:%M', ts_sec, 'unixepoch') AS time_slot, COUNT(*) AS frame_count
-      FROM packets
-      JOIN data_frames ON packets.id = data_frames.id
-      GROUP BY time_slot
-      ORDER BY time_slot;
+      SELECT mac, AVG(signal_strength) AS avg_signal, MIN(signal_strength) AS min_signal, MAX(signal_strength) AS max_signal
+      FROM devices
+      WHERE signal_strength IS NOT NULL
+      GROUP BY mac
+      ORDER BY avg_signal DESC;
 
-  - id: "28"
-    description: "Active SSIDs with Associated Clients and WPA-SEC Passwords (Last X Minutes)"
-    query: >
-      SELECT 
-        b.ssid AS ssid,
-        p.source_mac AS client_mac,
-        ws.password AS password,
-        COUNT(p.id) AS packet_count
-      FROM packets p
-      JOIN beacons b ON p.source_mac = b.source_mac
-      LEFT JOIN wpa_sec ws ON b.ssid = ws.ssid
-      WHERE p.ts_sec >= strftime('%s', 'now', '-{time_filter} minutes')
-      GROUP BY b.ssid, p.source_mac, ws.password
-      ORDER BY packet_count DESC;
+  - id: "18"
+    description: "List All Unique Device Manufacturers"
+    query: "SELECT DISTINCT manufacturer FROM devices WHERE manufacturer IS NOT NULL;"
 
-  - id: "29"
-    description: "List All SSIDs and Their Associated Clients"
+  - id: "19"
+    description: "Devices Associated with Multiple Access Points"
     query: >
-      SELECT 
-        b.ssid AS ssid,
-        b.source_mac AS ap_mac,
-        p.source_mac AS client_mac,
-        MAX(p.ts_sec) AS last_seen
-      FROM packets p
-      JOIN beacons b ON p.dest_mac = b.source_mac
-      WHERE b.ssid IS NOT NULL AND b.ssid != ''
-      GROUP BY b.ssid, b.source_mac, p.source_mac
-      ORDER BY b.ssid ASC, last_seen DESC;
+      SELECT mac, COUNT(DISTINCT associated_ap) AS ap_count
+      FROM clients
+      GROUP BY mac
+      HAVING ap_count > 1
+      ORDER BY ap_count DESC;
+
+  - id: "20"
+    description: "Count of Devices by Manufacturer"
+    query: >
+      SELECT manufacturer, COUNT(*) AS device_count
+      FROM devices
+      GROUP BY manufacturer
+      ORDER BY device_count DESC;

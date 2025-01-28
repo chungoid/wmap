@@ -1,5 +1,5 @@
 import os
-from tools.init_db import initialize_database
+from tools.init_db import initialize_db
 
 # Base directory of the project
 BASE_DIR = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
@@ -12,7 +12,8 @@ CONFIG = {
     "tools_dir": os.path.join(BASE_DIR, "tools"),
     "tests_dir": os.path.join(BASE_DIR, "tests"),
     "web_dir": os.path.join(BASE_DIR, "web"),
-    "pcap_file": None,  # Dynamically updated during capture
+    "config_dir": os.path.join(BASE_DIR, "config"),
+    "pcap_file": None  # Dynamically updated during capture
 }
 
 # Web Server Settings
@@ -23,6 +24,7 @@ WEB_SERVER = {
 
 # Default database path
 DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.db")
+DEFAULT_OUI_PATH = os.path.join(CONFIG["config_dir"], "oui_lowercase.txt")
 
 # Centralized log paths for all modules
 LOG_FILES = {
@@ -44,8 +46,7 @@ def ensure_directories_and_database():
                 print(f"Directory ensured: {dir_path}")
 
         print(f"Ensuring database at {DEFAULT_DB_PATH}...")
-        initialize_database(DEFAULT_DB_PATH)
+        initialize_db(DEFAULT_DB_PATH)
         print("Database initialization complete.")
     except Exception as e:
         print(f"Error ensuring directories and database: {e}")
-        raise
