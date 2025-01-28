@@ -3,12 +3,12 @@ import argparse
 import os
 import subprocess
 import logging
-from utils import wpa_sec, scapy_parser, init_wmap
+from utils import wpa_sec, scapy_parser, setup_work
 from config.config import CONFIG, DEFAULT_DB_PATH, setup_logging
 
 def main():
     # Initialize Files/Directories/Database and Logging
-    init_wmap.ensure_directories_and_database()
+    setup_work.ensure_directories_and_database()
     setup_logging()
     logger = logging.getLogger("wmap")
     logger.info("Starting wmap application.")
@@ -38,9 +38,6 @@ def main():
     os.makedirs(CONFIG["capture_dir"], exist_ok=True)
     logger.info(f"Capture directory ensured: {CONFIG['capture_dir']}")
 
-    capture_file = os.path.join(CONFIG["capture_dir"], 'wmap.pcapng')
-    logger.debug(f"Capture file path set to: {capture_file}")
-
     # Handle WPA-SEC related actions
     if wpa_sec.handle_wpa_sec_actions(args, DEFAULT_DB_PATH):
         logger.info("Handled WPA-SEC related action. Exiting.")
@@ -53,10 +50,8 @@ def main():
         logger.info("Parsing and storing complete.")
         return
 
-    # If neither active nor passive scanning is enabled, exit
-    if not args.active and not args.passive:
-        logger.error("Either --active or --passive must be specified if not parsing an existing file.")
-        parser.error("Either --active or --passive must be specified if not parsing an existing file.")
+    capture_file = os.path.join(CONFIG["capture_dir"], 'wmap.pcapng')
+    logger.debug(f"Capture file path set to: {capture_file}")
 
     # Ensure interface is provided for scanning modes
     if not args.interface:
@@ -84,7 +79,6 @@ def main():
         scapy_parser.live_scan(args.interface)
 
     logger.info("wmap application finished.")
-
 
 if __name__ == "__main__":
     main()

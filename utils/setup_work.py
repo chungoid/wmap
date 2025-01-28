@@ -3,18 +3,26 @@ import logging
 import os
 from config.config import CONFIG, DEFAULT_DB_PATH
 
-# Configure logging
-logger = logging.getLogger("init_db")
+# Ensure the logs directory exists
+LOG_DIR = 'logs'
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, 'setup_work.log')
 
+# Configure logging
+logger = logging.getLogger("setup_work")
+logging.basicConfig(level=logging.DEBUG, filename=LOG_FILE, filemode='w',
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 def initialize_db(db_path):
     """Initialize the SQLite database with the required schema."""
     conn = None
     try:
+        logger.info(f"Initializing database at {db_path}...")
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
         # Create access_points table
+        logger.info("Creating access_points table")
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS access_points (
             mac TEXT PRIMARY KEY,
@@ -31,9 +39,10 @@ def initialize_db(db_path):
             vht_capabilities TEXT
         )
         """)
-        logging.info("Created table: access_points")
+        logger.info("Created table: access_points")
 
         # Create clients table
+        logger.info("Creating clients table")
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS clients (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,9 +55,10 @@ def initialize_db(db_path):
             FOREIGN KEY (associated_ap) REFERENCES access_points(mac)
         )
         """)
-        logging.info("Created table: clients")
+        logger.info("Created table: clients")
 
         # Create wpa_sec_results table
+        logger.info("Creating wpa_sec_results table")
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS wpa_sec_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,21 +70,22 @@ def initialize_db(db_path):
             UNIQUE(bssid, ssid) ON CONFLICT REPLACE
         )
         """)
-        logging.info("Created table: wpa_sec_results")
+        logger.info("Created table: wpa_sec_results")
 
         # Create settings table
+        logger.info("Creating settings table")
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
         )
         """)
-        logging.info("Created table: settings")
+        logger.info("Created table: settings")
 
         conn.commit()
-        logging.info("Database initialized successfully.")
+        logger.info("Database initialized successfully.")
     except sqlite3.Error as e:
-        logging.error(f"Error initializing database: {e}")
+        logger.error(f"Error initializing database: {e}")
     finally:
         if conn:
             conn.close()
@@ -84,17 +95,15 @@ def ensure_directories_and_database():
     Ensure necessary directories are initialized and the database is created.
     """
     try:
-        logging.info("Checking directories...")
+        logger.info("Checking directories...")
         for key, dir_path in CONFIG.items():
             if key.endswith("_dir") and dir_path:
                 os.makedirs(dir_path, exist_ok=True)
-                logging.info(f"Directory ensured: {dir_path}")
+                logger.info(f"Directory ensured: {dir_path}")
 
-        logging.info(f"Ensuring database at {DEFAULT_DB_PATH}...")
+        logger.info(f"Ensuring database at {DEFAULT_DB_PATH}...")
         initialize_db(DEFAULT_DB_PATH)
-        logging.info("Database initialization complete.")
+        logger.info("Database initialization complete.")
     except Exception as e:
-        logging.error(f"Error ensuring directories and database: {e}")
+        logger.error(f"Error ensuring directories and database: {e}")
         print(f"Error ensuring directories and database: {e}")
-
-

@@ -32,8 +32,7 @@ LOG_FILES = {
     "wmap": os.path.join(CONFIG["log_dir"], "wmap.log"),
     "scapy_parser": os.path.join(CONFIG["log_dir"], "scapy_parser.log"),
     "wpa_sec": os.path.join(CONFIG["log_dir"], "wpa_sec.log"),
-    "init_db": os.path.join(CONFIG["log_dir"], "init_db.log"),
-    "config": os.path.join(CONFIG["log_dir"], "config.log"),
+    "setup_work": os.path.join(CONFIG["log_dir"], "setup_work.log"),
 }
 
 def setup_logging():

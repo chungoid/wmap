@@ -1,6 +1,7 @@
 import sqlite3
 import logging
 import json
+import os
 from scapy.all import rdpcap, sniff
 from datetime import datetime
 from scapy.fields import FlagValue
@@ -196,7 +197,7 @@ def parse_packet(packet):
                 packet_info['type'] = 'Client'
             logger.debug(f"Updated packet type to: {packet_info['type']}")
     except Exception as e:
-        logger.error(f"Error parsing packet: {e}")
+        logger.error(f"Error Updating on new informatione: {e}")
 
     return packet_info
 
@@ -260,29 +261,46 @@ def update_device_dict(device_dict, packet_info, oui_mapping):
     except Exception as e:
         logger.error(f"Error updating device dict: {e}")
 
+
 def store_results_in_db(device_dict):
     """Store the device dictionary results in the SQLite database."""
     conn = None
     try:
         logger.info(f"Adding results to database at {DEFAULT_DB_PATH}")
+
+        # Ensure the logs directory exists
+        logs_dir = 'logs'
+        os.makedirs(logs_dir, exist_ok=True)
+
+        # Output device dictionary to scapydict.txt in logs directory
+        scapydict_file = os.path.join(logs_dir, 'scapydict.txt')
+        with open(scapydict_file, 'w') as f:
+            json.dump(device_dict, f, default=convert_to_serializable, indent=2)
+        logger.info(f"Device dictionary written to {scapydict_file}")
+
         conn = sqlite3.connect(DEFAULT_DB_PATH)
         cursor = conn.cursor()
 
         for ap_mac, ap_info in device_dict.items():
             if ap_info.get('type') == 'AP':
-                logger.debug(f"Preparing to insert/update AP: {json.dumps(ap_info, default=convert_to_serializable, indent=2)}")
+                logger.debug(
+                    f"Preparing to insert/update AP: {json.dumps(ap_info, default=convert_to_serializable, indent=2)}")
                 cursor.execute("""
                 INSERT OR REPLACE INTO access_points (mac, ssid, encryption, device_type, last_seen, manufacturer, signal_strength, channel, rates, extended_capabilities, ht_capabilities, vht_capabilities)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    ap_info['mac'], ap_info['ssid'], json.dumps(ap_info['encryption']), 'AP', ap_info['last_seen'],
+                    ap_info['mac'], ap_info['ssid'], json.dumps(ap_info.get('encryption', 'Unknown')), 'AP',
+                    ap_info['last_seen'],
                     ap_info['manufacturer'],
-                    ap_info['signal_strength'], ap_info['channel'], json.dumps(ap_info['rates']),
-                    ap_info['extended_capabilities'],
-                    ap_info['ht_capabilities'], ap_info['vht_capabilities']
+                    ap_info.get('signal_strength'), ap_info.get('channel'), json.dumps(ap_info.get('rates')),
+                    ap_info.get('extended_capabilities'),
+                    ap_info.get('ht_capabilities'), ap_info.get('vht_capabilities')
                 ))
+                logger.debug(f"Inserted/Updated AP: {ap_info['mac']}")
+
                 for client in ap_info['clients']:
-                    logger.debug(f"Preparing to insert client for AP {ap_mac}: {json.dumps(client, default=convert_to_serializable, indent=2)}")
+                    logger.debug(
+                        f"Preparing to insert client for AP {ap_mac}: {json.dumps(client, default=convert_to_serializable, indent=2)}")
                     cursor.execute("""
                     INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap)
                     VALUES (?, ?, ?, ?, ?, ?)
@@ -290,6 +308,7 @@ def store_results_in_db(device_dict):
                         client['mac'], client['ssid'], client['last_seen'], client['manufacturer'],
                         client['signal_strength'], ap_mac
                     ))
+                    logger.debug(f"Inserted client: {client['mac']} for AP: {ap_mac}")
 
         conn.commit()
         logger.info("Results stored in the database successfully.")

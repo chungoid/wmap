@@ -3,7 +3,7 @@ import requests
 import sqlite3
 import logging
 
-from config.config import CONFIG, DEFAULT_DB_PATH, setup_logging
+from config.config import CONFIG, DEFAULT_DB_PATH
 
 logger = logging.getLogger('wpa_sec')
 
