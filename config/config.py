@@ -9,11 +9,13 @@ CONFIG = {
     "log_dir": os.path.join(BASE_DIR, "logs"),
     "db_dir": os.path.join(BASE_DIR, "database"),
     "capture_dir": os.path.join(BASE_DIR, "capture"),
-    #"tests_dir": os.path.join(BASE_DIR, "tests"),
     "web_dir": os.path.join(BASE_DIR, "web"),
     "config_dir": os.path.join(BASE_DIR, "config"),
     "pcap_file": "wmap.pcapng"
 }
+
+# Insert in CONFIG dictionary above if you want
+#"tests_dir": os.path.join(BASE_DIR, "tests")
 
 # Default Paths
 DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.db")

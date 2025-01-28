@@ -1,8 +1,7 @@
 import sqlite3
 import logging
 import os
-
-from config.config import CONFIG, LOG_FILES, DEFAULT_DB_PATH
+from config.config import CONFIG, DEFAULT_DB_PATH
 
 # Configure logging
 logger = logging.getLogger("init_db")
@@ -15,9 +14,9 @@ def initialize_db(db_path):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Create devices table
+        # Create access_points table
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS devices (
+        CREATE TABLE IF NOT EXISTS access_points (
             mac TEXT PRIMARY KEY,
             ssid TEXT,
             encryption TEXT,
@@ -32,7 +31,7 @@ def initialize_db(db_path):
             vht_capabilities TEXT
         )
         """)
-        logging.info("Created table: devices")
+        logging.info("Created table: access_points")
 
         # Create clients table
         cursor.execute("""
@@ -44,7 +43,7 @@ def initialize_db(db_path):
             manufacturer TEXT,
             signal_strength INTEGER,
             associated_ap TEXT,
-            FOREIGN KEY (associated_ap) REFERENCES devices(mac)
+            FOREIGN KEY (associated_ap) REFERENCES access_points(mac)
         )
         """)
         logging.info("Created table: clients")
