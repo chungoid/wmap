@@ -7,10 +7,10 @@ from utils import wpa_sec, scapy_parser, init_db
 from config.config import CONFIG, DEFAULT_DB_PATH, setup_logging
 
 # Ensure necessary directories and database are initialized
-setup_logging()
 init_db.ensure_directories_and_database()
 
 # Configure logging
+setup_logging()
 logger = logging.getLogger("wmap")
 
 def handle_wpa_sec_actions(args, db_path):
