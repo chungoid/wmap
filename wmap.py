@@ -6,53 +6,19 @@ import logging
 from utils import wpa_sec, scapy_parser, init_db
 from config.config import CONFIG, DEFAULT_DB_PATH, setup_logging
 
-# Ensure necessary directories and database are initialized
-init_db.ensure_directories_and_database()
-
-# Configure logging
-setup_logging()
-logger = logging.getLogger("wmap")
-
-def handle_wpa_sec_actions(args, db_path):
-    """Handle WPA-SEC related actions: upload, download, set key, and get key."""
-    try:
-        if args.set_key:
-            wpa_sec.set_wpasec_key("wpa_sec_key", args.set_key, db_path)
-            logging.info("WPA-SEC key set successfully.")
-            return True
-
-        if args.get_key:
-            key = wpa_sec.get_wpasec_key("wpa_sec_key", db_path)
-            if key:
-                print(f"WPA-SEC key: {key}")
-            else:
-                print("WPA-SEC key: null")
-            logging.info("WPA-SEC key retrieved.")
-            return True
-
-        if args.upload:
-            if args.upload == CONFIG["capture_dir"]:
-                wpa_sec.upload_all_pcaps(db_path)
-            else:
-                wpa_sec.upload_pcap(args.upload, db_path)
-            logging.info("WPA-SEC upload completed.")
-            return True
-
-        if args.download:
-            wpa_sec.download_potfile(args.download, db_path)
-            logging.info("WPA-SEC download completed.")
-            return True
-    except Exception as e:
-        logging.error(f"Error handling WPA-SEC actions: {e}")
-    return False
-
 def main():
+    # Initialize Files/Directories/Database and Logging
+    init_db.ensure_directories_and_database()
+    setup_logging()
+    logger = logging.getLogger("wmap")
+
     parser = argparse.ArgumentParser(description='Wireless capturing, parsing, and analyzing.')
 
     # Adding arguments
     parser.add_argument("--active", action="store_true", help="Enable active scanning mode")
     parser.add_argument("--passive", action="store_true", help="Enable passive scanning mode")
-    parser.add_argument("interface", help="Name of the wireless interface")
+    parser.add_argument("interface", nargs="?",
+                        help="Name of the wireless interface (optional if parsing existing file)")
     parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"],
                         help="Upload a specific PCAP file or all unmarked files in the capture directory.")
     parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
@@ -65,23 +31,13 @@ def main():
 
     args = parser.parse_args()
 
-    interface = args.interface
-
     # Ensure capture directory exists
     os.makedirs(CONFIG["capture_dir"], exist_ok=True)
     capture_file = os.path.join(CONFIG["capture_dir"], 'wmap.pcapng')
 
     # Handle WPA-SEC related actions
-    if handle_wpa_sec_actions(args, DEFAULT_DB_PATH):
+    if wpa_sec.handle_wpa_sec_actions(args, DEFAULT_DB_PATH):
         return
-
-    # Handle active/passive scanning
-    if args.active:
-        command = f"hcxdumptool -i {interface} -o {capture_file}"
-        subprocess.run(command, shell=True)
-    elif args.passive:
-        command = f"hcxdumptool -i {interface} -w {capture_file} --disable_deauthentication --disable_proberequest --disable_association --disable_reassociation --disable_beacon"
-        subprocess.run(command, shell=True)
 
     # Handle parsing of existing capture files
     if args.parse_existing:
@@ -96,6 +52,23 @@ def main():
 
         scapy_parser.store_results_in_db(device_dict)
         print("Parsing and storing complete.")
+        return
+
+    # If neither active nor passive scanning is enabled, exit
+    if not args.active and not args.passive:
+        parser.error("Either --active or --passive must be specified if not parsing an existing file.")
+
+    # Ensure interface is provided for scanning modes
+    if not args.interface:
+        parser.error("An interface must be specified for active or passive scanning modes.")
+
+    # Handle active/passive scanning
+    if args.active:
+        command = f"hcxdumptool -i {args.interface} -o {capture_file}"
+        subprocess.run(command, shell=True)
+    elif args.passive:
+        command = f"hcxdumptool -i {args.interface} -w {capture_file} --disable_deauthentication --disable_proberequest --disable_association --disable_reassociation --disable_beacon"
+        subprocess.run(command, shell=True)
 
     if not args.no_webserver:
         # Insert logic to start the web server if needed
@@ -103,7 +76,8 @@ def main():
 
     # Start live scan if active or passive options are used
     if args.active or args.passive:
-        scapy_parser.live_scan(interface)
+        scapy_parser.live_scan(args.interface)
+
 
 if __name__ == "__main__":
     main()
