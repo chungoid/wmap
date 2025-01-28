@@ -19,51 +19,51 @@ pip install -r requirements.txt
 
 ## Usage
 ```
-example: sudo ./wmap.py -t tcpdump -- -i wlan0 -w capture.pcap
+example:
+    ./wmap.py --set-key <your key>
+    sudo ./wmap.py --active wlan0
+    ./wmap.py --upload 
+    ./wmap.py --download
 
-usage: wmap.py [-h] [-t {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}] [--parser {scapy,tshark}] [-u [UPLOAD]] [-d [DOWNLOAD]] [--set-key SET_KEY] [--no-webserver] [--parse-existing PARSE_EXISTING] ...
+python wmap.py [-h] [--active] [--passive] [-u [UPLOAD]] [-d [DOWNLOAD]] [--set-key SET_KEY] [--get-key] [--no-webserver] [--parse-existing PARSE_EXISTING] [interface]
 
-Wi-Fi packet capture and parsing tool.
+Wireless capturing, parsing, and analyzing.
 
 positional arguments:
-  tool_args             All additional arguments for the tool (e.g., interface, output options).
+  interface             Name of the wireless interface (optional if parsing existing file)
 
 options:
   -h, --help            show this help message and exit
-  -t {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}, --tool {hcxdumptool,tshark,airodump-ng,tcpdump,dumpcap}
-                        Capture tool to use (e.g., hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap).
-  --parser {scapy,tshark}
-                        Parser to use for processing the capture (default: scapy).
+  --active              Enable active scanning mode
+  --passive             Enable passive scanning mode
   -u [UPLOAD], --upload [UPLOAD]
                         Upload a specific PCAP file or all unmarked files in the capture directory.
   -d [DOWNLOAD], --download [DOWNLOAD]
                         Download potfile from WPA-SEC (default path if no path provided).
   --set-key SET_KEY     Set the WPA-SEC key in the database.
+  --get-key             Get the WPA-SEC key from the database.
   --no-webserver        Disable web server and run CLI-only operations.
   --parse-existing PARSE_EXISTING
                         Parse an existing capture file (e.g., /path/to/file.pcap).
-
-
 ```
 
 ## Customize Database Queries
 
 Queries are defined in config/queries.yaml and can be customized or extended. Example:
 ```
-- id: "20"
-  description: "Open Networks with High Traffic"
-  query: >
-    SELECT ssid, source_mac AS ap_mac, COUNT(*) AS packet_count
-    FROM beacons
-    JOIN packets ON beacons.id = packets.id
-    WHERE encryption IS NULL OR encryption = 'Open'
-    GROUP BY ssid, source_mac
-    ORDER BY packet_count DESC;
+  - id: "10"
+    description: "Count of Clients Associated with Each Access Point"
+    query: >
+      SELECT devices.mac AS ap_mac, devices.ssid, COUNT(clients.mac) AS client_count
+      FROM devices
+      LEFT JOIN clients ON devices.mac = clients.associated_ap
+      WHERE devices.device_type = 'AP'
+      GROUP BY devices.mac, devices.ssid
+      ORDER BY client_count DESC;
 ```
 ## Features
 
-    Supports multiple capture tools: hcxdumptool, tshark, airodump-ng, tcpdump, dumpcap.
-    Parses captured data using Scapy (default) or TShark.
+    Parses captured data using Scapy (default).
     Stores parsed data in a SQLite database for further analysis.
     Uploads and downloads data with WPA-SEC integration.
     Extensible YAML-configured SQL queries in wmap/config/queries.yaml.
@@ -75,7 +75,6 @@ Queries are defined in config/queries.yaml and can be customized or extended. Ex
     database/: Contains the SQLite database for parsed data.
     capture/: Stores captured PCAP files.
     logs/: Logs for various components.
-    tools/: Scripts for database initialization and parsing.
     utils/: Utility modules for handling captures, parsing, and WPA-SEC integration.
     web/: Flask-based web application for viewing and querying data.
 
