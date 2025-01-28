@@ -4,12 +4,9 @@ from datetime import datetime
 from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11Auth, Dot11Elt, Dot11ProbeReq, Dot11AssoReq, Dot11EltRates, \
     Dot11ProbeResp, RadioTap
 
-from config.config import DEFAULT_DB_PATH, DEFAULT_OUI_PATH, LOG_FILES
+from config.config import DEFAULT_DB_PATH, DEFAULT_OUI_PATH, LOG_FILES, setup_logging
 
-# Configure logging
-log_file = LOG_FILES["scapy_parser"]
-logging.basicConfig(filename=log_file, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
+logger = logging.getLogger("scapy_parser")
 
 def parse_flag_value(value):
     try:

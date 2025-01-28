@@ -1,11 +1,11 @@
 import sqlite3
 import logging
 import os
-from config.config import CONFIG, LOG_FILES
+
+from config.config import CONFIG, LOG_FILES, DEFAULT_DB_PATH
 
 # Configure logging
-log_file = LOG_FILES["init_db"]
-logging.basicConfig(filename=log_file, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("init_db")
 
 
 def initialize_db(db_path):
@@ -79,3 +79,23 @@ def initialize_db(db_path):
     finally:
         if conn:
             conn.close()
+
+def ensure_directories_and_database():
+    """
+    Ensure necessary directories are initialized and the database is created.
+    """
+    try:
+        logging.info("Checking directories...")
+        for key, dir_path in CONFIG.items():
+            if key.endswith("_dir") and dir_path:
+                os.makedirs(dir_path, exist_ok=True)
+                logging.info(f"Directory ensured: {dir_path}")
+
+        logging.info(f"Ensuring database at {DEFAULT_DB_PATH}...")
+        initialize_db(DEFAULT_DB_PATH)
+        logging.info("Database initialization complete.")
+    except Exception as e:
+        logging.error(f"Error ensuring directories and database: {e}")
+        print(f"Error ensuring directories and database: {e}")
+
+

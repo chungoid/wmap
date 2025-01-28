@@ -1,8 +1,11 @@
 import os
 import requests
 import sqlite3
+import logging
 
-from config.config import CONFIG, DEFAULT_DB_PATH
+from config.config import CONFIG, DEFAULT_DB_PATH, setup_logging
+
+logger = logging.getLogger('wpa_sec')
 
 def download_potfile(output_file, db_path=DEFAULT_DB_PATH):
     """Download the potfile from WPA-SEC."""
@@ -90,3 +93,35 @@ def set_wpasec_key(key, value, db_path=DEFAULT_DB_PATH):
     conn.close()
     print(f"Set {key} to {value} in the database.")
 
+def handle_wpa_sec_actions(args, db_path):
+    """Handle WPA-SEC related actions: upload, download, set key, and get key."""
+    try:
+        if args.set_key:
+            set_wpasec_key("wpa_sec_key", args.set_key, db_path)
+            logging.info("WPA-SEC key set successfully.")
+            return True
+
+        if args.get_key:
+            key = get_wpasec_key("wpa_sec_key", db_path)
+            if key:
+                print(f"WPA-SEC key: {key}")
+            else:
+                print("WPA-SEC key: null")
+            logging.info("WPA-SEC key retrieved.")
+            return True
+
+        if args.upload:
+            if args.upload == CONFIG["capture_dir"]:
+                upload_all_pcaps(db_path)
+            else:
+                upload_pcap(args.upload, db_path)
+            logging.info("WPA-SEC upload completed.")
+            return True
+
+        if args.download:
+            download_potfile(args.download, db_path)
+            logging.info("WPA-SEC download completed.")
+            return True
+    except Exception as e:
+        logging.error(f"Error handling WPA-SEC actions: {e}")
+    return False

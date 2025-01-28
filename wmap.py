@@ -3,15 +3,15 @@ import argparse
 import os
 import subprocess
 import logging
-from utils import wpa_sec, scapy_parser
-from config.config import CONFIG, ensure_directories_and_database, DEFAULT_DB_PATH, LOG_FILES
+from utils import wpa_sec, scapy_parser, init_db
+from config.config import CONFIG, DEFAULT_DB_PATH, setup_logging
 
 # Ensure necessary directories and database are initialized
-ensure_directories_and_database()
+setup_logging()
+init_db.ensure_directories_and_database()
 
 # Configure logging
-log_file = os.path.join(LOG_FILES, 'wmap.log')
-logging.basicConfig(filename=log_file, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("wmap")
 
 def handle_wpa_sec_actions(args, db_path):
     """Handle WPA-SEC related actions: upload, download, set key, and get key."""
