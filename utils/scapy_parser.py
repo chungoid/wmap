@@ -11,9 +11,11 @@ from scapy.layers.dot11 import (
 )
 
 from config.config import DEFAULT_DB_PATH, DEFAULT_OUI_PATH
-
+from utils import setup_work
+from utils.setup_work import get_db_connection
 
 logger = logging.getLogger("scapy_parser")
+setup_work.initialize_db(DEFAULT_DB_PATH)
 
 def parse_flag_value(value):
     try:
@@ -57,83 +59,48 @@ def get_manufacturer(mac, oui_mapping):
     oui_prefix = mac[:8].lower()
     return oui_mapping.get(oui_prefix, 'Unknown')
 
-# Decoding functions for capabilities fields
 def decode_extended_capabilities(data):
-    if not data:
+    if not isinstance(data, str):
+        logger.debug("Extended capabilities data is invalid or not a string.")
         return "No Extended Capabilities"
-    capabilities = int(data, 16)
-    features = []
-    if capabilities & (1 << 0):
-        features.append("Extended Channel Switching")
-    if capabilities & (1 << 1):
-        features.append("WNM Sleep Mode")
-    if capabilities & (1 << 2):
-        features.append("TIM Broadcast")
-    # Add more features based on the IEEE 802.11 standard
-    return ", ".join(features) if features else "No Extended Capabilities"
-
-def decode_ht_capabilities(data):
-    if not data:
-        return "No HT Capabilities"
-    capabilities = bytes.fromhex(data)
-    features = []
-    if capabilities[0] & (1 << 0):
-        features.append("LDPC Coding Capability")
-    if capabilities[1] & (1 << 1):
-        features.append("Channel Width 40 MHz")
-    if capabilities[1] & (1 << 2):
-        features.append("Greenfield Mode")
-    # Add more features based on the IEEE 802.11n standard
-    return ", ".join(features) if features else "No HT Capabilities"
-
-def decode_vht_capabilities(data):
-    if not data:
-        return "No VHT Capabilities"
-    capabilities = bytes.fromhex(data)
-    features = []
-    if capabilities[0] & (1 << 0):
-        features.append("Max MPDU Length")
-    if capabilities[1] & (1 << 2):
-        features.append("Supported Channel Width")
-    if capabilities[2] & (1 << 0):
-        features.append("Rx LDPC")
-    # Add more features based on the IEEE 802.11ac standard
-    return ", ".join(features) if features else "No VHT Capabilities"
+    try:
+        capabilities = int(data, 16)
+        logger.debug(f"Decoded extended capabilities: {capabilities}")
+        features = []
+        if capabilities & (1 << 0):
+            features.append("Extended Channel Switching")
+        if capabilities & (1 << 1):
+            features.append("WNM Sleep Mode")
+        if capabilities & (1 << 2):
+            features.append("TIM Broadcast")
+        return ", ".join(features) if features else "No Extended Capabilities"
+    except Exception as e:
+        logger.error(f"Failed to decode extended capabilities: {data} - {e}")
+        return "No Extended Capabilities"
 
 def parse_packet(packet):
     packet_info = {}
     try:
-        logger.debug(f"Parsing packet: {packet.summary()}")
-
-        # Radiotap Layer
-        if packet.haslayer(RadioTap):
-            packet_info['RadioTap'] = {field: convert_to_serializable(getattr(packet[RadioTap], field))
-                                       for field in packet[RadioTap].fields}
-            logger.debug(f"Parsed RadioTap layer: {packet_info['RadioTap']}")
-
-        # 802.11 (WiFi) Layer
-        if packet.haslayer(Dot11):
-            packet_info['Dot11'] = {field: convert_to_serializable(getattr(packet[Dot11], field))
-                                    for field in packet[Dot11].fields}
-            logger.debug(f"Parsed Dot11 layer: {packet_info['Dot11']}")
-
-        # 802.11 Beacon Layer (AP)
         if packet.haslayer(Dot11Beacon):
-            bssid = packet[Dot11].addr2.upper()
-            essid = packet[Dot11Elt].info.decode() if packet.haslayer(Dot11Elt) else ''
-            try:
-                dbm_signal = packet.dBm_AntSignal
-            except:
-                dbm_signal = None
-            stats = packet[Dot11Beacon].network_stats()
-            channel = stats.get("channel")
-            crypto = stats.get("crypto")
-            timestamp = packet[Dot11Beacon].timestamp
-            lastseen = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            logger.debug(f"Parsing Dot11Beacon layer.")
+            bssid = getattr(packet[Dot11], 'addr2', None)
+            if bssid:
+                bssid = bssid.upper()
+            else:
+                logger.error("BSSID missing from packet.")
+                return {}
 
-            extended_capabilities = bytes_to_hex_string(getattr(packet.getlayer(Dot11Elt, ID=127), 'info', None))
-            ht_capabilities = bytes_to_hex_string(getattr(packet.getlayer(Dot11Elt, ID=45), 'info', None))
-            vht_capabilities = bytes_to_hex_string(getattr(packet.getlayer(Dot11Elt, ID=191), 'info', None))
+            essid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
+            dbm_signal = getattr(packet, 'dBm_AntSignal', None)
+            stats = packet[Dot11Beacon].network_stats()
+            channel = stats.get('channel', 0)
+            crypto = stats.get('crypto', 'None')
+
+            logger.debug(f"BSSID: {bssid}, ESSID: {essid}, Signal: {dbm_signal}, Channel: {channel}, Crypto: {crypto}")
+
+            extended_capabilities = bytes_to_hex_string(
+                getattr(packet.getlayer(Dot11Elt, ID=127), 'info', None))
+            logger.debug(f"Extended Capabilities Raw: {extended_capabilities}")
 
             packet_info['Dot11Beacon'] = {
                 'bssid': bssid,
@@ -141,206 +108,86 @@ def parse_packet(packet):
                 'dbm_signal': dbm_signal,
                 'channel': channel,
                 'crypto': crypto,
-                'timestamp': timestamp,
-                'lastseen': lastseen,
                 'extended_capabilities': decode_extended_capabilities(extended_capabilities),
-                'ht_capabilities': decode_ht_capabilities(ht_capabilities),
-                'vht_capabilities': decode_vht_capabilities(vht_capabilities)
-            }
-
-            packet_info['Signal_strength'] = dbm_signal
-            packet_info['Channel'] = channel
-            packet_info['Rates'] = packet[Dot11EltRates].rates if packet.haslayer(Dot11EltRates) else None
-            packet_info['Extended_Capabilities'] = decode_extended_capabilities(extended_capabilities)
-            packet_info['HT_Capabilities'] = decode_ht_capabilities(ht_capabilities)
-            packet_info['VHT_Capabilities'] = decode_vht_capabilities(vht_capabilities)
-
-            packet_info['type'] = 'AP'
-            logger.info(f"Parsed Dot11Beacon packet: {packet_info['Dot11Beacon']}")
-
-        # 802.11 Probe Request Layer (Client)
-        if packet.haslayer(Dot11ProbeReq):
-            packet_info['Dot11ProbeReq'] = {
-                'info': convert_to_serializable(packet[Dot11ProbeReq].info)
-            }
-            packet_info['type'] = 'Client'
-            logger.info(f"Parsed Dot11ProbeReq packet: {packet_info['Dot11ProbeReq']}")
-
-        # 802.11 Probe Response Layer (AP)
-        if packet.haslayer(Dot11ProbeResp):
-            packet_info['Dot11ProbeResp'] = {
-                'timestamp': packet[Dot11ProbeResp].timestamp,
-                'beacon_interval': packet[Dot11ProbeResp].beacon_interval,
-                'cap': parse_flag_value(packet[Dot11ProbeResp].cap)
             }
             packet_info['type'] = 'AP'
-            logger.info(f"Parsed Dot11ProbeResp packet: {packet_info['Dot11ProbeResp']}")
-
-        # 802.11 Authentication Layer
-        if packet.haslayer(Dot11Auth):
-            packet_info['Dot11Auth'] = {field: convert_to_serializable(getattr(packet[Dot11Auth], field))
-                                        for field in packet[Dot11Auth].fields}
-            logger.info(f"Parsed Dot11Auth packet: {packet_info['Dot11Auth']}")
-
-        # 802.11 Association Request Layer
-        if packet.haslayer(Dot11AssoReq):
-            packet_info['Dot11AssoReq'] = {field: convert_to_serializable(getattr(packet[Dot11AssoReq], field))
-                                           for field in packet[Dot11AssoReq].fields}
-            packet_info['type'] = 'Client'
-            logger.info(f"Parsed Dot11AssoReq packet: {packet_info['Dot11AssoReq']}")
-
-        # Update type based on new information
-        if 'type' not in packet_info:
-            if packet.haslayer(Dot11Beacon) or packet.haslayer(Dot11ProbeResp):
-                packet_info['type'] = 'AP'
-            elif packet.haslayer(Dot11ProbeReq) or packet.haslayer(Dot11AssoReq):
-                packet_info['type'] = 'Client'
-            logger.debug(f"Updated packet type to: {packet_info['type']}")
     except Exception as e:
-        logger.error(f"Error Updating on new informatione: {e}")
-
+        logger.error(f"Error parsing packet: {e}")
     return packet_info
 
 def update_device_dict(device_dict, packet_info, oui_mapping):
     try:
-        mac = packet_info['Dot11'].get('addr2', '').upper()
-        ssid = packet_info.get('Dot11Beacon', {}).get('essid', '') or \
-               packet_info.get('Dot11ProbeReq', {}).get('info', '')
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        mac = packet_info['Dot11Beacon'].get('bssid', '')
+        if not isinstance(mac, str):
+            logger.error("Invalid BSSID. Skipping entry.")
+            return
+
+        ssid = packet_info['Dot11Beacon'].get('essid', '')
         manufacturer = get_manufacturer(mac, oui_mapping)
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        if packet_info.get('type') == 'AP':
-            encryption = packet_info.get('Dot11Beacon', {}).get('crypto', 'Unknown')
-            if mac not in device_dict:
-                device_dict[mac] = {
-                    'mac': mac,
-                    'ssid': ssid,
-                    'encryption': encryption,
-                    'last_seen': timestamp,
-                    'manufacturer': manufacturer,
-                    'signal_strength': packet_info.get('Signal_strength'),
-                    'channel': packet_info.get('Channel'),
-                    'rates': packet_info.get('Rates'),
-                    'extended_capabilities': packet_info.get('Extended_Capabilities'),
-                    'ht_capabilities': packet_info.get('HT_Capabilities'),
-                    'vht_capabilities': packet_info.get('VHT_Capabilities'),
-                    'clients': []
-                }
-                logger.info(f"New AP added to device dict: {device_dict[mac]}")
-            else:
-                device_dict[mac]['last_seen'] = timestamp
-                device_dict[mac]['signal_strength'] = packet_info.get('Signal_strength')
-                device_dict[mac]['channel'] = packet_info.get('Channel')
-                device_dict[mac]['rates'] = packet_info.get('Rates')
-                device_dict[mac]['extended_capabilities'] = packet_info.get('Extended_Capabilities')
-                device_dict[mac]['ht_capabilities'] = packet_info.get('HT_Capabilities')
-                device_dict[mac]['vht_capabilities'] = packet_info.get('VHT_Capabilities')
-                logger.debug(f"Updated AP in device dict: {device_dict[mac]}")
-        elif packet_info.get('type') == 'Client':
-            ap_mac = packet_info['Dot11'].get('addr1', '').upper()
-            client_info = {
-                'mac': mac,
-                'ssid': ssid,
-                'last_seen': timestamp,
-                'manufacturer': manufacturer,
-                'signal_strength': packet_info.get('Signal_strength')
-            }
-            if not client_info['ssid']:
-                if ap_mac in device_dict:
-                    ap_ssid = device_dict[ap_mac].get('ssid', '')
-                    client_info['ssid'] = ap_ssid if ap_ssid else ap_mac
-                else:
-                    client_info['ssid'] = ap_mac
-
-            if ap_mac in device_dict:
-                device_dict[ap_mac]['clients'].append(client_info)
-                logger.info(f"Client added to AP {ap_mac} in device dict: {client_info}")
-            else:
-                device_dict[mac] = client_info
-                logger.info(f"New client added to device dict: {client_info}")
+        device_dict[mac] = {
+            'mac': mac,
+            'ssid': ssid,
+            'encryption': packet_info['Dot11Beacon'].get('crypto', 'Unknown'),
+            'last_seen': timestamp,
+            'manufacturer': manufacturer,
+            'signal_strength': packet_info['Dot11Beacon'].get('dbm_signal'),
+            'channel': packet_info['Dot11Beacon'].get('channel'),
+            'extended_capabilities': packet_info['Dot11Beacon'].get('extended_capabilities'),
+        }
+        logger.info(f"AP added to device dict: {device_dict[mac]}")
     except Exception as e:
         logger.error(f"Error updating device dict: {e}")
 
 
-def store_results_in_db(device_dict):
-    """Store the device dictionary results in the SQLite database."""
-    conn = None
+def store_results_in_db(device_dict, db_path=DEFAULT_DB_PATH):
+    """Store parsed results into the database."""
+    logger.debug(f"Database path used for insertion: {db_path}")
     try:
-        logger.info(f"Adding results to database at {DEFAULT_DB_PATH}")
+        with get_db_connection(db_path) as conn:
+            cursor = conn.cursor()
+            for ap_mac, ap_info in device_dict.items():
+                try:
+                    # Convert set to comma-separated string
+                    encryption = ",".join(ap_info['encryption']) if isinstance(ap_info['encryption'], set) else ap_info['encryption']
 
-        # Ensure the logs directory exists
-        logs_dir = 'logs'
-        os.makedirs(logs_dir, exist_ok=True)
-
-        # Output device dictionary to scapydict.txt in logs directory
-        scapydict_file = os.path.join(logs_dir, 'scapydict.txt')
-        with open(scapydict_file, 'w') as f:
-            json.dump(device_dict, f, default=convert_to_serializable, indent=2)
-        logger.info(f"Device dictionary written to {scapydict_file}")
-
-        conn = sqlite3.connect(DEFAULT_DB_PATH)
-        cursor = conn.cursor()
-
-        for ap_mac, ap_info in device_dict.items():
-            if ap_info.get('type') == 'AP':
-                logger.debug(
-                    f"Preparing to insert/update AP: {json.dumps(ap_info, default=convert_to_serializable, indent=2)}")
-                cursor.execute("""
-                INSERT OR REPLACE INTO access_points (mac, ssid, encryption, device_type, last_seen, manufacturer, signal_strength, channel, rates, extended_capabilities, ht_capabilities, vht_capabilities)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    ap_info['mac'], ap_info['ssid'], json.dumps(ap_info.get('encryption', 'Unknown')), 'AP',
-                    ap_info['last_seen'],
-                    ap_info['manufacturer'],
-                    ap_info.get('signal_strength'), ap_info.get('channel'), json.dumps(ap_info.get('rates')),
-                    ap_info.get('extended_capabilities'),
-                    ap_info.get('ht_capabilities'), ap_info.get('vht_capabilities')
-                ))
-                logger.debug(f"Inserted/Updated AP: {ap_info['mac']}")
-
-                for client in ap_info['clients']:
-                    logger.debug(
-                        f"Preparing to insert client for AP {ap_mac}: {json.dumps(client, default=convert_to_serializable, indent=2)}")
                     cursor.execute("""
-                    INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        client['mac'], client['ssid'], client['last_seen'], client['manufacturer'],
-                        client['signal_strength'], ap_mac
+                        ap_info['mac'], ap_info['ssid'], encryption,
+                        ap_info['last_seen'], ap_info['manufacturer'], ap_info['signal_strength'],
+                        ap_info['channel'], ap_info['extended_capabilities']
                     ))
-                    logger.debug(f"Inserted client: {client['mac']} for AP: {ap_mac}")
+                    logger.info(f"Inserted AP into database: {ap_info}")
+                except Exception as e:
+                    logger.error(f"Error inserting AP {ap_info['mac']} into database: {e}")
 
-        conn.commit()
-        logger.info("Results stored in the database successfully.")
-    except sqlite3.Error as e:
+            # Verify data after commit
+            conn.commit()
+            cursor.execute("SELECT * FROM access_points;")
+            rows = cursor.fetchall()
+            logger.debug(f"Rows in access_points table after insertion: {rows}")
+    except Exception as e:
         logger.error(f"Error storing results in the database: {e}")
-    finally:
-        if conn:
-            conn.close()
 
-def process_pcap(pcap_file, oui_file=DEFAULT_OUI_PATH):
-    """Process a PCAP file to extract and store wireless network information."""
-    packets = rdpcap(pcap_file)
-    device_dict = {}
-    oui_mapping = parse_oui_file(oui_file)
 
-    for packet in packets:
-        packet_info = parse_packet(packet)
-        if packet_info:
-            update_device_dict(device_dict, packet_info, oui_mapping)
+def process_pcap(pcap_file, oui_file=DEFAULT_OUI_PATH, db_path=DEFAULT_DB_PATH):
+    """Process a PCAP file and store results in the database."""
+    try:
+        packets = rdpcap(pcap_file)
+        device_dict = {}
+        oui_mapping = parse_oui_file(oui_file)
 
-    store_results_in_db(device_dict)
+        for packet in packets:
+            packet_info = parse_packet(packet)
+            if packet_info:
+                update_device_dict(device_dict, packet_info, oui_mapping)
 
-def live_scan(interface):
-    """Perform live scan, parsing packets continually and updating the database."""
-    device_dict = {}
-    oui_mapping = parse_oui_file(DEFAULT_OUI_PATH)
+        store_results_in_db(device_dict, db_path=db_path)
+    except Exception as e:
+        logger.error(f"Error processing PCAP file: {e}")
 
-    def packet_handler(packet):
-        packet_info = parse_packet(packet)
-        if packet_info:
-            update_device_dict(device_dict, packet_info, oui_mapping)
-            store_results_in_db(device_dict)
+    logger.info("PCAP processing complete.")
 
-    logger.info(f"Starting live scan on interface: {interface}")
-    sniff(iface=interface, prn=packet_handler, store=0)
