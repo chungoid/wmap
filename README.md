@@ -86,6 +86,4 @@ Attribution
 This project makes use of the following third-party tools and libraries:
 
     Scapy (BSD License): Used for parsing network traffic. Scapy License
-    TShark (LGPL): Used as an optional parser and capture tool. Wireshark License
     hcxdumptool (GPL): Used for capturing WPA handshakes. hcxdumptool License
-    Aircrack-ng Suite (GPL): Includes airodump-ng for packet capture. Aircrack License
