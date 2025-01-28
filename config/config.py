@@ -1,5 +1,5 @@
 import os
-from tools.init_db import initialize_db
+from utils.init_db import initialize_db
 
 # Base directory of the project
 BASE_DIR = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
@@ -16,22 +16,23 @@ CONFIG = {
     "pcap_file": None  # Dynamically updated during capture
 }
 
+# Default Paths
+DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.db")
+DEFAULT_OUI_PATH = os.path.join(CONFIG["config_dir"], "oui_lowercase.txt")
+
 # Web Server Settings
 WEB_SERVER = {
     "host": "0.0.0.0",  # Default to all interfaces
     "port": 8080        # Default port
 }
 
-# Default database path
-DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.db")
-DEFAULT_OUI_PATH = os.path.join(CONFIG["config_dir"], "oui_lowercase.txt")
-
 # Centralized log paths for all modules
 LOG_FILES = {
+    "wmap": os.path.join(CONFIG["log_dir"], "wmap.log"),
     "scapy_parser": os.path.join(CONFIG["log_dir"], "scapy_parser.log"),
-    "tshark_parser": os.path.join(CONFIG["log_dir"], "tshark_parser.log"),
-    "query_runner": os.path.join(CONFIG["log_dir"], "query_runner.log"),
-    "wrapper": os.path.join(CONFIG["log_dir"], "wrapper.log"),
+    "wpa_sec": os.path.join(CONFIG["log_dir"], "wpa_sec.log"),
+    "init_db": os.path.join(CONFIG["log_dir"], "init_db.log"),
+    "config": os.path.join(CONFIG["log_dir"], "config.log"),
 }
 
 def ensure_directories_and_database():

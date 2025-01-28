@@ -1,10 +1,10 @@
 import sqlite3
 import logging
 import os
-from config.config import CONFIG
+from config.config import CONFIG, LOG_FILES
 
 # Configure logging
-log_file = os.path.join(CONFIG['log_dir'], "init_db.log")
+log_file = LOG_FILES["init_db"]
 logging.basicConfig(filename=log_file, level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
