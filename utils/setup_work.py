@@ -1,6 +1,7 @@
 import sqlite3
 import logging
 import os
+
 from contextlib import contextmanager
 from config.config import CONFIG, DEFAULT_DB_PATH
 

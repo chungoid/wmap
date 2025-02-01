@@ -2,6 +2,7 @@ import os
 import requests
 import sqlite3
 import logging
+
 from config.config import CONFIG
 
 logger = logging.getLogger('wpa_sec')

@@ -1,5 +1,6 @@
 import logging
 import os
+import signal
 import sqlite3
 import subprocess
 import time
@@ -305,48 +306,48 @@ def process_pcap(pcap_file, db_conn):
     except Exception as e:
         logger.error(f"Error processing PCAP file: {e}")
 
+
 def live_scan(interface, db_conn):
     """
-    Starts hcxdumptool in live mode and parses the generated PCAP file in real-time.
+    Start a live capture using hcxdumptool and parse packets in real-time.
 
-    - interface: The network interface to capture packets on.
-    - db_conn: The active SQLite database connection.
+    Args:
+        interface: The wireless interface to use for monitoring.
+        db_conn: SQLite database connection.
     """
-    capture_file = os.path.join(CONFIG["capture_dir"], "wmap.pcapng")
-
+    capture_file = os.path.join(CONFIG["capture_dir"], 'wmap.pcapng')
     command = f"hcxdumptool -i {interface} -o {capture_file}"
+
     logger.info(f"Starting live capture with hcxdumptool: {command}")
-
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(2)
-
-    logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
+    process = subprocess.Popen(command, shell=True, preexec_fn=os.setsid)
 
     try:
-        with PcapReader(capture_file) as pcap:
-            while process.poll() is None:
-                try:
-                    packet = next(pcap)
-                    parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
-                except StopIteration:
-                    time.sleep(0.5)
-                    continue
+        # **Wait for the capture file to appear**
+        max_wait_time = 5  # Maximum wait time in seconds
+        wait_time = 0
+        while not os.path.exists(capture_file):
+            if wait_time >= max_wait_time:
+                logger.error(f"Capture file {capture_file} was not created in time.")
+                return
+            time.sleep(1)
+            wait_time += 1
+
+        logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
+
+        with PcapNgReader(capture_file) as pcap_reader:
+            device_dict = {}
+            oui_mapping = parse_oui_file()
+            for packet in pcap_reader:
+                parse_packet(packet, device_dict, oui_mapping, db_conn)
+
+            store_results_in_db(device_dict, db_conn)
 
     except KeyboardInterrupt:
-        logger.warning("Ctrl+C detected. Stopping hcxdumptool and finishing packet parsing...")
-        process.terminate()
-        process.wait()
-
-        logger.info("Processing any remaining packets before exiting...")
-        with PcapReader(capture_file) as pcap:
-            for packet in pcap:
-                parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
-
-        logger.info("Live scan completed. Exiting.")
+        logger.info("Live scan interrupted by user. Stopping hcxdumptool.")
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
 
     except Exception as e:
         logger.error(f"Error during live scanning: {e}")
 
     finally:
         logger.info("Closing database connection.")
-        db_conn.close()
