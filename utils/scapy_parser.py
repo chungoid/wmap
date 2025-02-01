@@ -2,7 +2,6 @@ import logging
 import os
 import sqlite3
 import subprocess
-import signal
 import time
 
 from datetime import datetime
@@ -12,14 +11,11 @@ from scapy.layers.dot11 import (
     Dot11ProbeResp, RadioTap, Dot11Deauth
 )
 from scapy.utils import PcapReader, PcapNgReader
-
 from config.config import DEFAULT_OUI_PATH, CONFIG
 
 logger = logging.getLogger("scapy_parser")
 oui_file = DEFAULT_OUI_PATH
 
-
-# Check file existence
 if not os.path.exists(oui_file):
     print(f"OUI file not found at {oui_file}")
 else:
@@ -27,13 +23,13 @@ else:
 
 def update_device_dict(device_dict, packet_info, oui_mapping):
     try:
-        mac = packet_info['Dot11Beacon'].get('bssid', '').lower()  # Ensure lowercase
+        mac = packet_info['Dot11Beacon'].get('bssid', '').lower()
         if not isinstance(mac, str):
             logger.error("Invalid BSSID. Skipping entry.")
             return
 
         ssid = packet_info['Dot11Beacon'].get('essid', '')
-        manufacturer = get_manufacturer(mac, oui_mapping)  # Match OUI mapping
+        manufacturer = get_manufacturer(mac, oui_mapping)
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         device_dict[mac] = {
@@ -125,7 +121,7 @@ def get_manufacturer(mac, oui_mapping):
         str: The manufacturer name or "Unknown" if not found.
     """
     try:
-        oui = mac[:8].lower()  # Extract OUI and keep it lowercase
+        oui = mac[:8].lower()
         return oui_mapping.get(oui, "Unknown")
     except Exception as e:
         logger.error(f"Error determining manufacturer for MAC {mac}: {e}")
@@ -208,7 +204,6 @@ def update_frame_count(device_mac, frame_type, db_conn):
 
         logger.debug(f"Updating frame count for {device_mac}: {frame_type}")
 
-        # Increment frame count or insert if missing
         cursor.execute("""
             INSERT INTO frame_counts (mac, frame_type, count) 
             VALUES (?, ?, 1) 
@@ -233,7 +228,6 @@ def update_total_data(mac, packet_length, db_conn):
 
         cursor = db_conn.cursor()
 
-        # **Check if the MAC exists first**
         cursor.execute("SELECT total_data FROM access_points WHERE mac = ?", (mac,))
         result = cursor.fetchone()
 
@@ -295,18 +289,17 @@ def process_pcap(pcap_file, db_conn):
         db_conn (sqlite3.Connection): Database connection.
     """
     device_dict = {}  # Initialize the device dictionary
-    oui_mapping = parse_oui_file()  # Load OUI file
+    oui_mapping = parse_oui_file()
 
     try:
         logger.info(f"Processing PCAP file: {pcap_file}")
 
-        # Use PcapReader instead of rdpcap for memory efficiency
         with PcapReader(pcap_file) as packets:
             for packet in packets:
-                parse_packet(packet, device_dict, oui_mapping, db_conn)  # Pass db_conn
+                parse_packet(packet, device_dict, oui_mapping, db_conn)
 
         logger.debug(f"Device dictionary after processing: {device_dict}")
-        store_results_in_db(device_dict, db_conn)  # Save parsed data to the database
+        store_results_in_db(device_dict, db_conn)
         logger.info("PCAP processing complete.")
 
     except Exception as e:
@@ -324,29 +317,26 @@ def live_scan(interface, db_conn):
     command = f"hcxdumptool -i {interface} -o {capture_file}"
     logger.info(f"Starting live capture with hcxdumptool: {command}")
 
-    # Start hcxdumptool as a subprocess
     process = subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(2)  # Give hcxdumptool time to start
+    time.sleep(2)
 
     logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 
     try:
-        # Open the capture file for live reading
         with PcapReader(capture_file) as pcap:
-            while process.poll() is None:  # Check if hcxdumptool is still running
+            while process.poll() is None:
                 try:
-                    packet = next(pcap)  # Read packets as they arrive
+                    packet = next(pcap)
                     parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
                 except StopIteration:
-                    time.sleep(0.5)  # No new packets, wait a bit and retry
+                    time.sleep(0.5)
                     continue
 
     except KeyboardInterrupt:
         logger.warning("Ctrl+C detected. Stopping hcxdumptool and finishing packet parsing...")
-        process.terminate()  # Stop hcxdumptool
-        process.wait()  # Wait for the process to fully exit
+        process.terminate()
+        process.wait()
 
-        # Ensure all packets are processed before exiting
         logger.info("Processing any remaining packets before exiting...")
         with PcapReader(capture_file) as pcap:
             for packet in pcap:
@@ -359,4 +349,4 @@ def live_scan(interface, db_conn):
 
     finally:
         logger.info("Closing database connection.")
-        db_conn.close()  # Ensure db_conn is properly closed
+        db_conn.close()
