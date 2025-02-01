@@ -11,7 +11,7 @@ CONFIG = {
     "capture_dir": os.path.join(BASE_DIR, "capture"),
     "web_dir": os.path.join(BASE_DIR, "web"),
     "config_dir": os.path.join(BASE_DIR, "config"),
-    "pcap_file": "wmap.pcapng"
+    "pcap_file": "wmap.pcapng",
 }
 
 # Insert in CONFIG dictionary above if you want
@@ -19,7 +19,7 @@ CONFIG = {
 
 # Default Paths
 DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.db")
-DEFAULT_OUI_PATH = os.path.join(CONFIG["config_dir"], "oui_lowercase.txt")
+DEFAULT_OUI_PATH = os.path.abspath(os.path.join(CONFIG["config_dir"], "oui_lowercase.txt"))
 
 # Web Server Settings
 WEB_SERVER = {
