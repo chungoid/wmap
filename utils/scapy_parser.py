@@ -307,9 +307,15 @@ def process_pcap(pcap_file, db_conn):
         logger.error(f"Error processing PCAP file: {e}")
 
 
+import time
+import os
+import signal
+import subprocess
+from scapy.utils import PcapNgReader
+
 def live_scan(interface, db_conn):
     """
-    Start a live capture using hcxdumptool and parse packets in real-time.
+    Start a live capture using hcxdumptool and process packets in real-time.
 
     Args:
         interface: The wireless interface to use for monitoring.
@@ -334,13 +340,18 @@ def live_scan(interface, db_conn):
 
         logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 
+        device_dict = {}
+        oui_mapping = parse_oui_file()
+
         with PcapNgReader(capture_file) as pcap_reader:
-            device_dict = {}
-            oui_mapping = parse_oui_file()
             for packet in pcap_reader:
                 parse_packet(packet, device_dict, oui_mapping, db_conn)
 
-            store_results_in_db(device_dict, db_conn)
+                # **Immediately store results in the database**
+                store_results_in_db(device_dict, db_conn)
+
+                # **Commit after every packet for real-time updates**
+                db_conn.commit()
 
     except KeyboardInterrupt:
         logger.info("Live scan interrupted by user. Stopping hcxdumptool.")
