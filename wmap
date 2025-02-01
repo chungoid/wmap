@@ -4,81 +4,96 @@ import os
 import subprocess
 import logging
 from utils import wpa_sec, scapy_parser, setup_work
-from config.config import CONFIG, DEFAULT_DB_PATH, setup_logging
+from config.config import CONFIG, setup_logging
+from utils.setup_work import get_db_connection
+
 
 def main():
-    # Initialize Files/Directories/Database and Logging
-    setup_work.ensure_directories_and_database()
-    setup_logging()
+    """ Main entry point for the application. Handles scanning, parsing, and database management. """
+
+    # **Initialize Logging First**
+    setup_logging()  # Ensures all loggers (wmap, scapy_parser, wpa_sec, etc.) are configured
     logger = logging.getLogger("wmap")
     logger.info("Starting wmap application.")
 
-    logger.info("Directories and database ensured.")
+    # **Ensure Directories & Database Exist**
+    setup_work.ensure_directories_and_database()
 
-    parser = argparse.ArgumentParser(description='Wireless capturing, parsing, and analyzing.')
+    # **Parse Command-Line Arguments**
+    parser = argparse.ArgumentParser(description="Wireless capturing, parsing, and analyzing.")
 
-    # Adding arguments
+    # **Scanning & Parsing Modes**
     parser.add_argument("--active", action="store_true", help="Enable active scanning mode")
     parser.add_argument("--passive", action="store_true", help="Enable passive scanning mode")
     parser.add_argument("interface", nargs="?",
                         help="Name of the wireless interface (optional if parsing existing file)")
+    parser.add_argument("--parse-existing", type=str, help="Parse an existing capture file (e.g., /path/to/file.pcap)")
+
+    # **WPA-SEC Integration**
     parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"],
                         help="Upload a specific PCAP file or all unmarked files in the capture directory.")
     parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
                         help="Download potfile from WPA-SEC (default path if no path provided).")
     parser.add_argument("--set-key", type=str, help="Set the WPA-SEC key in the database.")
     parser.add_argument("--get-key", action="store_true", help="Get the WPA-SEC key from the database.")
+
+    # **Other Options**
     parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
-    parser.add_argument("--parse-existing", type=str, help="Parse an existing capture file (e.g., /path/to/file.pcap).")
 
     args = parser.parse_args()
     logger.debug(f"Parsed arguments: {args}")
 
-    # Ensure capture directory exists
+    # **Ensure Capture Directory Exists**
     os.makedirs(CONFIG["capture_dir"], exist_ok=True)
     logger.info(f"Capture directory ensured: {CONFIG['capture_dir']}")
 
-    # Handle WPA-SEC related actions
-    if wpa_sec.handle_wpa_sec_actions(args, DEFAULT_DB_PATH):
-        logger.info("Handled WPA-SEC related action. Exiting.")
-        return
+    # **Open a Single Database Connection**
+    with get_db_connection() as db_conn:
+        logger.info("Database connection established.")
 
-    # Handle parsing of existing capture files
-    if args.parse_existing:
-        logger.info(f"Parsing existing file: {args.parse_existing}")
-        scapy_parser.process_pcap(args.parse_existing)
-        logger.info("Parsing and storing complete.")
-        return
+        # **Handle WPA-SEC Related Actions**
+        if wpa_sec.handle_wpa_sec_actions(args, db_conn):
+            logger.info("Handled WPA-SEC related action. Exiting.")
+            return
 
-    capture_file = os.path.join(CONFIG["capture_dir"], 'wmap.pcapng')
-    logger.debug(f"Capture file path set to: {capture_file}")
+        # **Handle Parsing of Existing Capture Files**
+        if args.parse_existing:
+            logger.info(f"Parsing existing file: {args.parse_existing}")
+            scapy_parser.process_pcap(args.parse_existing, db_conn)
+            logger.info("Parsing and storing complete.")
+            return
 
-    # Ensure interface is provided for scanning modes
-    if not args.interface:
-        logger.error("An interface must be specified for active or passive scanning modes.")
-        parser.error("An interface must be specified for active or passive scanning modes.")
+        # **Ensure Interface is Provided for Scanning**
+        if not args.interface:
+            logger.error("An interface must be specified for active or passive scanning modes.")
+            parser.error("An interface must be specified for active or passive scanning modes.")
 
-    # Handle active/passive scanning
-    if args.active:
-        command = f"hcxdumptool -i {args.interface} -o {capture_file}"
-        logger.info(f"Starting active scan with command: {command}")
-        subprocess.run(command, shell=True)
-    elif args.passive:
-        command = f"hcxdumptool -i {args.interface} -w {capture_file} --disable_deauthentication --disable_proberequest --disable_association --disable_reassociation --disable_beacon"
-        logger.info(f"Starting passive scan with command: {command}")
-        subprocess.run(command, shell=True)
+        capture_file = os.path.join(CONFIG["capture_dir"], "wmap.pcapng")
+        logger.debug(f"Capture file path set to: {capture_file}")
 
-    if not args.no_webserver:
-        logger.info("Starting web server.")
-        # Insert logic to start the web server if needed
-        pass
+        # **Handle Active/Passive Scanning**
+        if args.active:
+            command = f"hcxdumptool -i {args.interface} -o {capture_file}"
+            logger.info(f"Starting active scan with command: {command}")
+            subprocess.run(command, shell=True)
+        elif args.passive:
+            command = f"hcxdumptool -i {args.interface} -w {capture_file} --disable_deauthentication --disable_proberequest --disable_association --disable_reassociation --disable_beacon"
+            logger.info(f"Starting passive scan with command: {command}")
+            subprocess.run(command, shell=True)
 
-    # Start live scan if active or passive options are used
-    if args.active or args.passive:
-        logger.info(f"Starting live scan on interface: {args.interface}")
-        scapy_parser.live_scan(args.interface)
+        # **Start Web Server (if enabled)**
+        if not args.no_webserver:
+            logger.info("Starting web server.")
+            # Insert logic to start the web server if needed
+            pass
 
-    logger.info("wmap application finished.")
+        # **Start Live Scan if Active or Passive Scanning is Used**
+        if args.active or args.passive:
+            logger.info(f"Starting live scan on interface: {args.interface}")
+            scapy_parser.live_scan(args.interface, db_conn)
+
+        logger.info("wmap application finished.")
+
 
 if __name__ == "__main__":
     main()

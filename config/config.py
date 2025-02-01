@@ -35,6 +35,7 @@ LOG_FILES = {
     "setup_work": os.path.join(CONFIG["log_dir"], "setup_work.log"),
 }
 
+
 def setup_logging():
     for logger_name, log_file in LOG_FILES.items():
         logger = logging.getLogger(logger_name)

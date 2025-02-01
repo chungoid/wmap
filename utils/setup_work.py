@@ -23,76 +23,84 @@ def get_db_connection(db_path=DEFAULT_DB_PATH):
     finally:
         conn.close()
 
-def initialize_db(db_path=DEFAULT_DB_PATH):
+def initialize_db(db_conn):
     """Initialize the SQLite database with the required schema."""
     try:
-        logger.info(f"Initializing database at {db_path}...")
-        with get_db_connection(db_path) as conn:
-            cursor = conn.cursor()
+        logger.info("Initializing database...")
+        cursor = db_conn.cursor()  # Now db_conn is correctly passed as a connection object
 
-            # Create access_points table
-            logger.info("Creating access_points table")
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS access_points (
-                mac TEXT PRIMARY KEY,
-                ssid TEXT,
-                encryption TEXT,
-                device_type TEXT,
-                last_seen TEXT,
-                manufacturer TEXT,
-                signal_strength INTEGER,
-                channel INTEGER,
-                rates TEXT,
-                extended_capabilities TEXT,
-                ht_capabilities TEXT,
-                vht_capabilities TEXT
-            )
-            """)
-            logger.info("Created table: access_points")
+        # Create tables
+        logger.info("Creating access_points table")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS access_points (
+            mac TEXT PRIMARY KEY,
+            ssid TEXT,
+            encryption TEXT,
+            device_type TEXT,
+            last_seen TEXT,
+            manufacturer TEXT,
+            signal_strength INTEGER,
+            channel INTEGER,
+            rates TEXT,
+            extended_capabilities TEXT,
+            ht_capabilities TEXT,
+            vht_capabilities TEXT,
+            total_data INTEGER DEFAULT 0  -- New field for total data usage in bytes
+        )
+        """)
 
-            # Create clients table
-            logger.info("Creating clients table")
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS clients (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                mac TEXT,
-                ssid TEXT,
-                last_seen TEXT,
-                manufacturer TEXT,
-                signal_strength INTEGER,
-                associated_ap TEXT,
-                FOREIGN KEY (associated_ap) REFERENCES access_points(mac)
-            )
-            """)
-            logger.info("Created table: clients")
+        logger.info("Creating clients table")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS clients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mac TEXT,
+            ssid TEXT,
+            last_seen TEXT,
+            manufacturer TEXT,
+            signal_strength INTEGER,
+            associated_ap TEXT,
+            total_data INTEGER DEFAULT 0,  -- Track data usage for clients too
+            FOREIGN KEY (associated_ap) REFERENCES access_points(mac)
+        )
+        """)
 
-            # Create wpa_sec_results table
-            logger.info("Creating wpa_sec_results table")
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS wpa_sec_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bssid TEXT NOT NULL,
-                source_mac TEXT,
-                ssid TEXT,
-                password TEXT,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(bssid, ssid) ON CONFLICT REPLACE
-            )
-            """)
-            logger.info("Created table: wpa_sec_results")
+        logger.info("Creating frame_counts table")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS frame_counts (
+            mac TEXT PRIMARY KEY,
+            beacon INTEGER DEFAULT 0,
+            probe_req INTEGER DEFAULT 0,
+            probe_resp INTEGER DEFAULT 0,
+            auth INTEGER DEFAULT 0,
+            deauth INTEGER DEFAULT 0,
+            assoc_req INTEGER DEFAULT 0,
+            FOREIGN KEY (mac) REFERENCES access_points(mac) ON DELETE CASCADE
+        )
+        """)
 
-            # Create settings table
-            logger.info("Creating settings table")
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-            """)
-            logger.info("Created table: settings")
+        logger.info("Creating wpa_sec_results table")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wpa_sec_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bssid TEXT NOT NULL,
+            source_mac TEXT,
+            ssid TEXT,
+            password TEXT,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(bssid, ssid) ON CONFLICT REPLACE
+        )
+        """)
 
-            conn.commit()
-            logger.info("Database initialized successfully.")
+        logger.info("Creating settings table")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """)
+
+        db_conn.commit()
+        logger.info("Database initialized successfully.")
     except sqlite3.Error as e:
         logger.error(f"Error initializing database: {e}")
 
@@ -108,8 +116,13 @@ def ensure_directories_and_database():
                 logger.info(f"Directory ensured: {dir_path}")
 
         logger.info(f"Ensuring database at {DEFAULT_DB_PATH}...")
-        initialize_db(DEFAULT_DB_PATH)
+
+        # ✅ Fix: Open database connection here, then pass it to initialize_db()
+        with get_db_connection(DEFAULT_DB_PATH) as db_conn:
+            initialize_db(db_conn)  # Pass connection, NOT path!
+
         logger.info("Database initialization complete.")
     except Exception as e:
         logger.error(f"Error ensuring directories and database: {e}")
         print(f"Error ensuring directories and database: {e}")
+
