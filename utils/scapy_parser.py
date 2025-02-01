@@ -74,15 +74,29 @@ def convert_to_serializable(obj):
 def bytes_to_hex_string(byte_seq):
     return byte_seq.hex() if byte_seq else None
 
+def decode_extended_capabilities(data):
+    """Decode extended capabilities from packets."""
+    if not isinstance(data, str):
+        logger.debug("Extended capabilities data is invalid or not a string.")
+        return "No Extended Capabilities"
+    try:
+        capabilities = int(data, 16)
+        features = []
+        if capabilities & (1 << 0):
+            features.append("Extended Channel Switching")
+        if capabilities & (1 << 1):
+            features.append("WNM Sleep Mode")
+        if capabilities & (1 << 2):
+            features.append("TIM Broadcast")
+        return ", ".join(features) if features else "No Extended Capabilities"
+    except Exception as e:
+        logger.error(f"Failed to decode extended capabilities: {data} - {e}")
+        return "No Extended Capabilities"
+
+
 def parse_oui_file():
-    """
-    Parse the OUI file to create a mapping of OUI prefixes to manufacturers.
-    Returns:
-        dict: A dictionary mapping OUI prefixes to manufacturer names.
-    """
-
+    """Parse the OUI file to create a mapping of OUI prefixes to manufacturers."""
     logger.info(f"Attempting to parse OUI file at: {oui_file}")
-
     oui_mapping = {}
     try:
         with open(oui_file, 'r') as file:
@@ -117,118 +131,67 @@ def get_manufacturer(mac, oui_mapping):
         logger.error(f"Error determining manufacturer for MAC {mac}: {e}")
         return "Unknown"
 
-
-def decode_extended_capabilities(data):
-    if not isinstance(data, str):
-        logger.debug("Extended capabilities data is invalid or not a string.")
-        return "No Extended Capabilities"
-    try:
-        capabilities = int(data, 16)
-        logger.debug(f"Decoded extended capabilities: {capabilities}")
-        features = []
-        if capabilities & (1 << 0):
-            features.append("Extended Channel Switching")
-        if capabilities & (1 << 1):
-            features.append("WNM Sleep Mode")
-        if capabilities & (1 << 2):
-            features.append("TIM Broadcast")
-        return ", ".join(features) if features else "No Extended Capabilities"
-    except Exception as e:
-        logger.error(f"Failed to decode extended capabilities: {data} - {e}")
-        return "No Extended Capabilities"
-
-
 def parse_packet(packet, device_dict, oui_mapping, db_conn):
-    """
-    Parse a packet and extract information about access points and clients.
-    Also tracks frame types and total data usage.
-
-    - device_dict: Stores detected devices.
-    - oui_mapping: OUI to manufacturer mapping.
-    - db_conn: SQLite database connection.
-    """
+    """Parse a packet and extract information about access points and clients."""
     try:
-        # Get packet length (in bytes)
         packet_length = len(packet) if packet else 0
-        frame_type = None  # Initialize frame type
+        frame_type = None
+        dbm_signal = getattr(packet[RadioTap], 'dBm_AntSignal', None) if packet.haslayer(RadioTap) else None
 
         if packet.haslayer(Dot11Beacon):
-            logger.debug(f"Parsing Dot11Beacon layer.")
+            logger.debug("Parsing Dot11Beacon layer.")
             frame_type = "beacon"
             bssid = getattr(packet[Dot11], 'addr2', '').lower()
             if not bssid:
                 logger.error("BSSID missing from packet.")
                 return
-
             essid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
-            dbm_signal = getattr(packet, 'dBm_AntSignal', None)
             stats = packet[Dot11Beacon].network_stats()
             channel = stats.get('channel', 0)
             crypto = stats.get('crypto', 'None')
             manufacturer = get_manufacturer(bssid, oui_mapping)
-
-            extended_capabilities = bytes_to_hex_string(
-                getattr(packet.getlayer(Dot11Elt, ID=127), 'info', None)
+            extended_capabilities = decode_extended_capabilities(
+                bytes_to_hex_string(getattr(packet.getlayer(Dot11Elt, ID=127), 'info', None))
             )
 
-            logger.debug(f"BSSID: {bssid}, ESSID: {essid}, Signal: {dbm_signal}, "
-                         f"Channel: {channel}, Crypto: {crypto}")
+            if bssid in device_dict:
+                device_dict[bssid]['total_data'] += packet_length
+            else:
+                device_dict[bssid] = {
+                    'mac': bssid, 'ssid': essid, 'encryption': crypto, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'channel': channel,
+                    'extended_capabilities': extended_capabilities, 'clients': [], 'total_data': packet_length
+                }
 
-            device_dict[bssid] = {
-                'mac': bssid,
-                'ssid': essid,
-                'encryption': crypto,
-                'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'manufacturer': manufacturer,
-                'signal_strength': dbm_signal,
-                'channel': channel,
-                'extended_capabilities': decode_extended_capabilities(extended_capabilities),
-                'clients': []
-            }
-            logger.info(f"AP added to device dict: {device_dict[bssid]}")
+            logger.info(f"AP updated: {device_dict[bssid]}")
 
         elif packet.haslayer(Dot11ProbeReq):
-            logger.debug(f"Parsing Dot11ProbeReq layer.")
+            logger.debug("Parsing Dot11ProbeReq layer.")
             frame_type = "probe_req"
             client_mac = getattr(packet[Dot11], 'addr2', '').lower()
             associated_ap = getattr(packet[Dot11], 'addr1', '').lower()
             essid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
-            dbm_signal = getattr(packet, 'dBm_AntSignal', None)
-
             if not client_mac:
                 logger.error("Client MAC is missing. Skipping packet.")
                 return
-
             if associated_ap in device_dict:
-                client_info = {
-                    'mac': client_mac,
-                    'ssid': essid,
-                    'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'manufacturer': get_manufacturer(client_mac, oui_mapping),
-                    'signal_strength': dbm_signal,
-                }
-                device_dict[associated_ap].setdefault('clients', []).append(client_info)
-                logger.info(f"Client added to AP {associated_ap}: {client_info}")
-            else:
-                logger.warning(f"Associated AP {associated_ap} not found in device_dict for client {client_mac}.")
+                client_info = {'mac': client_mac, 'ssid': essid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                               'manufacturer': get_manufacturer(client_mac, oui_mapping),
+                               'signal_strength': dbm_signal, 'total_data': packet_length}
+                existing_clients = device_dict[associated_ap].get('clients', [])
+                if not any(c['mac'] == client_mac for c in existing_clients):
+                    device_dict[associated_ap].setdefault('clients', []).append(client_info)
+                    logger.info(f"Client added to AP {associated_ap}: {client_info}")
 
         elif packet.haslayer(Dot11ProbeResp):
-            logger.debug(f"Parsing Dot11ProbeResp layer.")
             frame_type = "probe_resp"
-
         elif packet.haslayer(Dot11Auth):
-            logger.debug(f"Parsing Dot11Auth layer.")
             frame_type = "auth"
-
         elif packet.haslayer(Dot11Deauth):
-            logger.debug(f"Parsing Dot11Deauth layer.")
             frame_type = "deauth"
-
         elif packet.haslayer(Dot11AssoReq):
-            logger.debug(f"Parsing Dot11AssoReq layer.")
             frame_type = "assoc_req"
 
-        # **Update Database for Frame Counts & Data Usage**
         if frame_type:
             device_mac = getattr(packet[Dot11], 'addr2', '').lower()
             update_frame_count(device_mac, frame_type, db_conn)
@@ -263,73 +226,61 @@ def update_frame_count(device_mac, frame_type, db_conn):
         logger.error(f"Unexpected error updating frame count for {device_mac}: {e}")
 
 
-def update_total_data(device_mac, packet_length, db_conn):
-    """Update the total data usage for a device in the database."""
+def update_total_data(mac, packet_length, db_conn):
+    """Update total data usage for a MAC address in the database."""
     try:
+        logger.debug(f"Updating total data for {mac}: +{packet_length} bytes")
+
         cursor = db_conn.cursor()
 
-        logger.debug(f"Fetching total data for {device_mac}. Packet size: {packet_length} bytes.")
-
-        # Retrieve existing data usage
-        cursor.execute("SELECT total_data FROM access_points WHERE mac = ?", (device_mac,))
+        # **Check if the MAC exists first**
+        cursor.execute("SELECT total_data FROM access_points WHERE mac = ?", (mac,))
         result = cursor.fetchone()
 
-        if not result:
-            logger.warning(f"No existing record for {device_mac}. Data usage will not be updated.")
-            return
+        if result is None:
+            logger.warning(f"MAC {mac} not found in access_points table. Inserting new entry.")
+            cursor.execute("""
+                INSERT INTO access_points (mac, total_data)
+                VALUES (?, ?)
+            """, (mac, packet_length))
+        else:
+            updated_total = result[0] + packet_length
+            cursor.execute("""
+                UPDATE access_points
+                SET total_data = ?
+                WHERE mac = ?
+            """, (updated_total, mac))
+            logger.debug(f"Updated total_data for {mac}: {updated_total}")
 
-        total_data = result[0] if result[0] else 0
-        total_data += packet_length  # Add new packet size to total
-
-        cursor.execute(
-            "UPDATE access_points SET total_data = ? WHERE mac = ?",
-            (total_data, device_mac)
-        )
         db_conn.commit()
-
-        logger.info(f"Updated total data for {device_mac}: {total_data} bytes.")
-
-    except sqlite3.Error as e:
-        logger.error(f"Database error updating total data for {device_mac}: {e}")
-
     except Exception as e:
-        logger.error(f"Unexpected error updating total data for {device_mac}: {e}")
+        logger.error(f"Error updating total data for {mac}: {e}")
 
 
 def store_results_in_db(device_dict, db_conn):
     """Store parsed results into the database."""
-    logger.debug("Storing results in the database...")
     try:
         cursor = db_conn.cursor()
         for ap_mac, ap_info in device_dict.items():
             try:
-                # Convert set to comma-separated string
                 encryption = ",".join(ap_info['encryption']) if isinstance(ap_info['encryption'], set) else ap_info['encryption']
+                if not ap_info['ssid'] and not ap_info['encryption']:
+                    logger.warning(f"AP with MAC {ap_mac} has missing details: SSID={ap_info['ssid']}, Encryption={ap_info['encryption']}")
+                    continue
 
                 cursor.execute("""
-                INSERT OR REPLACE INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    ap_info['mac'], ap_info['ssid'], encryption,
-                    ap_info['last_seen'], ap_info['manufacturer'], ap_info['signal_strength'],
-                    ap_info['channel'], ap_info['extended_capabilities']
-                ))
-                logger.info(f"Inserted AP into database: {ap_info}")
-
-                # Insert associated clients
+                INSERT OR REPLACE INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (ap_info['mac'], ap_info['ssid'], encryption, ap_info['last_seen'], ap_info['manufacturer'],
+                      ap_info['signal_strength'], ap_info['channel'], ap_info['extended_capabilities'], ap_info.get('total_data', 0)))
                 for client in ap_info.get('clients', []):
                     cursor.execute("""
-                    INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """, (
-                        client['mac'], client['ssid'], client['last_seen'],
-                        client['manufacturer'], client['signal_strength'], ap_info['mac']
-                    ))
-                    logger.info(f"Inserted client into database: {client}")
+                    INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (client['mac'], client['ssid'], client['last_seen'], client['manufacturer'], client['signal_strength'], ap_info['mac'], client.get('total_data', 0)))
 
             except Exception as e:
                 logger.error(f"Error inserting AP {ap_info['mac']} into database: {e}")
-
         db_conn.commit()
     except Exception as e:
         logger.error(f"Error storing results in the database: {e}")
@@ -337,32 +288,29 @@ def store_results_in_db(device_dict, db_conn):
 
 def process_pcap(pcap_file, db_conn):
     """
-    Process a PCAP file and parse its packets.
+    Process a PCAP file efficiently using PcapReader.
 
     Args:
-        pcap_file: Path to the PCAP file to process.
-        db_conn: SQLite database connection.
+        pcap_file (str): Path to the PCAP file to process.
+        db_conn (sqlite3.Connection): Database connection.
     """
     device_dict = {}  # Initialize the device dictionary
     oui_mapping = parse_oui_file()  # Load OUI file
 
     try:
-        packet_count = 0
         logger.info(f"Processing PCAP file: {pcap_file}")
 
-        # Use PcapNgReader as an iterator (no len())
-        with PcapNgReader(pcap_file) as packets:
+        # Use PcapReader instead of rdpcap for memory efficiency
+        with PcapReader(pcap_file) as packets:
             for packet in packets:
-                packet_count += 1
-                parse_packet(packet, device_dict, oui_mapping, db_conn)  # Pass db_conn here
+                parse_packet(packet, device_dict, oui_mapping, db_conn)  # Pass db_conn
 
-        logger.info(f"Finished processing {packet_count} packets from {pcap_file}")
-        store_results_in_db(device_dict, db_conn)  # Use db_conn instead of db_path
+        logger.debug(f"Device dictionary after processing: {device_dict}")
+        store_results_in_db(device_dict, db_conn)  # Save parsed data to the database
         logger.info("PCAP processing complete.")
 
     except Exception as e:
         logger.error(f"Error processing PCAP file: {e}")
-
 
 def live_scan(interface, db_conn):
     """

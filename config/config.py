@@ -33,6 +33,7 @@ LOG_FILES = {
     "scapy_parser": os.path.join(CONFIG["log_dir"], "scapy_parser.log"),
     "wpa_sec": os.path.join(CONFIG["log_dir"], "wpa_sec.log"),
     "setup_work": os.path.join(CONFIG["log_dir"], "setup_work.log"),
+    "test": os.path.join(CONFIG["log_dir"], "test.log")
 }
 
 
