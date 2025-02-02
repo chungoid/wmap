@@ -7,7 +7,7 @@ import time
 
 from datetime import datetime
 from scapy.fields import FlagValue
-from scapy.utils import PcapReader
+from scapy.utils import PcapReader, PcapNgReader
 from scapy.layers.dot11 import (
     Dot11, Dot11Beacon, Dot11Auth, Dot11Elt, Dot11ProbeReq, Dot11AssoReq,
     Dot11ProbeResp, RadioTap, Dot11Deauth
@@ -306,12 +306,6 @@ def process_pcap(pcap_file, db_conn):
     except Exception as e:
         logger.error(f"Error processing PCAP file: {e}")
 
-
-import time
-import os
-import signal
-import subprocess
-from scapy.utils import PcapNgReader
 
 def live_scan(interface, db_conn):
     """
