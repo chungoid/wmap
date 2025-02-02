@@ -184,7 +184,20 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
             channel = stats.get('channel', 0)
             crypto = stats.get('crypto', 'None')
             manufacturer = get_manufacturer(mac, oui_mapping)
-            extended_capabilities = "No Extended Capabilities"
+            extended_capabilities = "No Extended Capabilities"  # Default
+            if packet.haslayer(Dot11Elt):
+                elt = packet[Dot11Elt]
+                while isinstance(elt, Dot11Elt):
+                    if elt.ID == 127:  # Extended Capabilities Tag
+                        try:
+                            hex_data = bytes_to_hex_string(elt.info)  # Use Utility Function
+                            if hex_data and len(hex_data) > 2:  # Ensure Valid Short Hex String
+                                extended_capabilities = decode_extended_capabilities(hex_data)
+                        except Exception as e:
+                            logger.error(f"Failed to process extended capabilities: {e}")
+                            extended_capabilities = "No Extended Capabilities"  # Fallback
+                        break
+                    elt = elt.payload  # Move to Next Information Element (IE)
 
             # **Ensure AP exists in device_dict**
             if mac not in device_dict:
@@ -261,6 +274,9 @@ def store_results_in_db(device_dict, db_conn):
                 else:  # Access Point
                     encryption = ",".join(device_info['encryption']) if isinstance(device_info.get('encryption', ''), set) else device_info.get('encryption', '')
 
+                    # ✅ **Log Extended Capabilities for Debugging**
+                    logger.debug(f"Storing Extended Capabilities for {mac}: {device_info['extended_capabilities']}")
+
                     cursor.execute("""
                     INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data, frame_counts)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -280,7 +296,6 @@ def store_results_in_db(device_dict, db_conn):
 
     except Exception as e:
         logger.error(f"Error storing results in the database: {e}")
-
 
 
 def process_pcap(pcap_file, db_conn):
