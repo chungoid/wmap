@@ -87,10 +87,10 @@ def main():
                 logger.info("Stopped hcxdumptool and live scan.")
 
         # **Start Web Server (if enabled)**
-        if not args.no_webserver:
-            logger.info("Starting web server.")
+        #if not args.no_webserver:
+            #logger.info("Starting web server.")
             # Insert logic to start the web server if needed
-            pass
+            #pass
 
         logger.info("wmap application finished.")
 

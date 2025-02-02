@@ -338,30 +338,34 @@ def store_results_in_db(device_dict, db_conn):
 
 def process_pcap(pcap_file, db_conn):
     """
-    Process a PCAP file efficiently using PcapReader.
+    Process a PCAP file and parse its packets.
 
     Args:
-        pcap_file (str): Path to the PCAP file to process.
-        db_conn (sqlite3.Connection): Database connection.
+        pcap_file: Path to the PCAP file to process.
+        db_conn: SQLite database connection.
     """
     device_dict = {}  # Initialize the device dictionary
-    oui_mapping = parse_oui_file()
+    oui_mapping = parse_oui_file()  # Load OUI file
 
     try:
         logger.info(f"Processing PCAP file: {pcap_file}")
 
-        with PcapReader(pcap_file) as packets:
-            for packet in packets:
-                parse_packet(packet, device_dict, oui_mapping, db_conn)
+        with PcapReader(pcap_file) as pcap_reader:
+            for packet in pcap_reader:
+                try:
+                    parse_packet(packet, device_dict, oui_mapping, db_conn)
+                except Scapy_Exception as e:
+                    logger.warning(f"Skipped corrupted packet: {e}")
+                    continue  # **Skip invalid packets instead of stopping**
 
         logger.debug(f"Device dictionary after processing: {device_dict}")
-        store_results_in_db(device_dict, db_conn)
+        store_results_in_db(device_dict, db_conn)  # Use db_conn instead of db_path
         logger.info("PCAP processing complete.")
 
+    except FileNotFoundError:
+        logger.error(f"PCAP file not found: {pcap_file}")
     except Exception as e:
         logger.error(f"Error processing PCAP file: {e}")
-
-logger = logging.getLogger("scapy_parser")
 
 
 def live_scan(interface, db_conn, capture_file):
@@ -372,10 +376,9 @@ def live_scan(interface, db_conn, capture_file):
     process = subprocess.Popen(hcxdumptool_cmd, shell=True, preexec_fn=os.setsid)
 
     try:
-        # **Ensure capture file exists before reading**
         while not os.path.exists(capture_file):
             logger.info(f"Waiting for capture file: {capture_file}")
-            time.sleep(1)
+            time.sleep(8)
 
         logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 

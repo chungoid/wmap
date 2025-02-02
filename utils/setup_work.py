@@ -103,7 +103,6 @@ def ensure_directories_and_database():
 
         logger.info(f"Ensuring database at {DEFAULT_DB_PATH}...")
 
-        # ✅ Fix: Open database connection here, then pass it to initialize_db()
         with get_db_connection(DEFAULT_DB_PATH) as db_conn:
             initialize_db(db_conn)  # Pass connection, NOT path!
 
