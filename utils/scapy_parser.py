@@ -179,9 +179,8 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
             db_conn.commit()
             logger.info(f"AP updated: {device_dict[bssid]}")
 
-        elif packet.haslayer(Dot11ProbeReq):
-            logger.debug("Parsing Dot11ProbeReq layer.")
-            frame_type = "probe_req"
+        elif packet.haslayer(Dot11ProbeReq) or packet.haslayer(Dot11Auth) or packet.haslayer(Dot11AssoReq):
+            frame_type = "probe_req" if packet.haslayer(Dot11ProbeReq) else "auth" if packet.haslayer(Dot11Auth) else "assoc_req"
             client_mac = getattr(packet[Dot11], 'addr2', '').lower()
             associated_ap = getattr(packet[Dot11], 'addr1', '').lower()
             essid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
@@ -190,15 +189,30 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                 logger.error("Client MAC is missing. Skipping packet.")
                 return
 
-            # **Log client even if not associated with an AP**
-            cursor.execute("""
-                INSERT OR IGNORE INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (client_mac, essid if essid else "Unknown", datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                  get_manufacturer(client_mac, oui_mapping), dbm_signal, associated_ap if associated_ap else None, packet_length))
+            # **Check if client already exists**
+            cursor.execute("SELECT * FROM clients WHERE mac = ?", (client_mac,))
+            existing_client = cursor.fetchone()
+
+            if existing_client:
+                # **Update the existing client entry**
+                cursor.execute("""
+                    UPDATE clients SET ssid=?, last_seen=?, manufacturer=?, signal_strength=?, associated_ap=?, total_data=total_data + ?
+                    WHERE mac=?
+                """, (essid if essid else existing_client[2], datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                      get_manufacturer(client_mac, oui_mapping), dbm_signal, associated_ap if associated_ap else existing_client[6],
+                      packet_length, client_mac))
+                logger.info(f"Client updated in database: {client_mac}, Associated AP: {associated_ap if associated_ap else 'None'}")
+
+            else:
+                # **Insert new client if not exists**
+                cursor.execute("""
+                    INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (client_mac, essid if essid else "Unknown", datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                      get_manufacturer(client_mac, oui_mapping), dbm_signal, associated_ap if associated_ap else None, packet_length))
+                logger.info(f"New client recorded in database: {client_mac}, Associated AP: {associated_ap if associated_ap else 'None'}")
 
             db_conn.commit()
-            logger.info(f"Client recorded in database: {client_mac}, Associated AP: {associated_ap if associated_ap else 'None'}")
 
         elif packet.haslayer(Dot11ProbeResp):
             logger.debug("Parsing Dot11ProbeResp layer.")
@@ -233,21 +247,8 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
             db_conn.commit()
             logger.info(f"Probe Response detected, stored as AP: {device_dict[bssid]}")
 
-        elif packet.haslayer(Dot11Auth) or packet.haslayer(Dot11AssoReq):
-            frame_type = "auth" if packet.haslayer(Dot11Auth) else "assoc_req"
-            client_mac = getattr(packet[Dot11], 'addr2', '').lower()
-            ap_mac = getattr(packet[Dot11], 'addr1', '').lower()
-
-            if client_mac and ap_mac:
-                logger.info(f"Client {client_mac} attempting {frame_type} with AP {ap_mac}")
-
-                cursor.execute("""
-                    INSERT OR IGNORE INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (client_mac, "", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), get_manufacturer(client_mac, oui_mapping),
-                      dbm_signal, ap_mac, packet_length))
-
-                db_conn.commit()
+        elif packet.haslayer(Dot11Deauth):
+            frame_type = "deauth"
 
         if frame_type:
             device_mac = getattr(packet[Dot11], 'addr2', '').lower()
@@ -256,6 +257,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
 
     except Exception as e:
         logger.error(f"Error parsing packet: {e}")
+
 
 
 
