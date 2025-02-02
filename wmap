@@ -84,7 +84,7 @@ def main():
         process = subprocess.Popen(hcxdumptool_cmd, shell=True, preexec_fn=os.setsid)
 
         # **Start Live Scanning & Parsing**
-        scapy_parser.live_scan(args.interface, db_conn, capture_file, process)
+        scapy_parser.live_scan(capture_file, db_conn, process)
 
         # **Start Web Server (if enabled)**
         if not args.no_webserver:
