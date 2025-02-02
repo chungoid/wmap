@@ -369,51 +369,46 @@ def process_pcap(pcap_file, db_conn):
 
 
 def live_scan(interface, db_conn, capture_file, process):
-    """Live scan parsing with real-time packet processing and error handling."""
+    """Live scan parsing with real-time packet processing and enhanced error handling."""
     logger.info(f"Starting live parsing on: {capture_file}")
 
     try:
-        # **Wait for capture file to be created**
+        # **Ensure capture file exists before proceeding**
         while not os.path.exists(capture_file):
             logger.info(f"Waiting for capture file: {capture_file}")
             time.sleep(3)
 
         logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 
-        # **Process packets as they are written to the capture file**
+        # **Open the capture file for live reading**
         with PcapReader(capture_file) as pcap_reader:
             for packet in pcap_reader:
                 try:
-                    # **Try parsing the packet normally**
+                    # **Attempt to parse each packet**
                     parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
-
-                except Scapy_Exception as e:
-                    logger.warning(f"Skipped corrupted packet: {e}")
-                    continue  # **Skip corrupted packets**
-
-                except ValueError as e:
-                    logger.warning(f"Malformed packet skipped: {e}")
-                    continue  # **Skip malformed packets**
 
                 except OSError as e:
                     if "Invalid Block body length" in str(e):
-                        logger.warning(f"Handling invalid block: {e}. Attempting partial recovery.")
+                        logger.warning(f"Handling invalid block: {e}. Attempting to recover.")
 
-                        # **Attempt Partial Recovery Instead of Skipping**
-                        try:
-                            partial_data = bytes(packet)[:64]  # **Extract the first 64 bytes safely**
-                            logger.debug(f"Partial packet data extracted: {partial_data.hex()}")
-                        except Exception as recovery_error:
-                            logger.error(f"Partial recovery failed: {recovery_error}")
-                            continue  # **Skip only if partial recovery fails**
+                        # **Attempt to skip only the problematic packet**
+                        continue  # Skip the packet instead of stopping
 
                     else:
-                        logger.error(f"Unexpected OS error during live scanning: {e}")
-                        break  # **Exit only if it's another critical OSError**
+                        logger.error(f"Unexpected OS error: {e}")
+                        continue  # Ensure the loop continues
+
+                except Scapy_Exception as e:
+                    logger.warning(f"Skipped corrupted packet: {e}")
+                    continue  # Skip corrupted packets
+
+                except ValueError as e:
+                    logger.warning(f"Malformed packet skipped: {e}")
+                    continue  # Skip malformed packets
 
                 except Exception as e:
                     logger.error(f"Unexpected parsing error: {e}")
-                    continue  # **Skip other unknown errors instead of stopping**
+                    continue  # Skip unknown errors instead of stopping
 
                 # **Check if hcxdumptool is still running**
                 if process.poll() is not None:
