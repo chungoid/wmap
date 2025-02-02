@@ -20,10 +20,10 @@ pip install -r requirements.txt
 ## Usage
 ```
 example:
-    ./wmap.py --set-key <your key>
-    sudo ./wmap.py --active wlan0
-    ./wmap.py --upload 
-    ./wmap.py --download
+    sudo python3 wmap --set-key <your key>
+    sudo python3 wmap --active wlan0
+    sudo python3 wmap --upload 
+    sudo python3 wmap --download
 
 python wmap.py [-h] [--active] [--passive] [-u [UPLOAD]] [-d [DOWNLOAD]] [--set-key SET_KEY] [--get-key] [--no-webserver] [--parse-existing PARSE_EXISTING] [interface]
 
