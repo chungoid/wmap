@@ -157,6 +157,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                 bytes_to_hex_string(getattr(packet.getlayer(Dot11Elt, ID=127), 'info', None))
             )
 
+            # Ensure AP exists in device_dict and update total_data
             if bssid in device_dict:
                 device_dict[bssid]['total_data'] += packet_length
             else:
@@ -166,15 +167,21 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                     'extended_capabilities': extended_capabilities, 'clients': [], 'total_data': packet_length
                 }
 
-            # **Update or Insert AP into database**
+            # Retrieve existing clients for this AP from the database
+            cursor.execute("SELECT clients FROM access_points WHERE mac = ?", (bssid,))
+            existing_clients = cursor.fetchone()
+            existing_clients = json.loads(existing_clients[0]) if existing_clients and existing_clients[0] else []
+
+            # Update or Insert AP in database
             cursor.execute("""
-                INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data, clients)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mac) DO UPDATE SET
                 ssid=excluded.ssid, encryption=excluded.encryption, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
                 signal_strength=excluded.signal_strength, channel=excluded.channel, extended_capabilities=excluded.extended_capabilities,
-                total_data=access_points.total_data + excluded.total_data
-            """, (bssid, essid, crypto, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), manufacturer, dbm_signal, channel, extended_capabilities, packet_length))
+                total_data=access_points.total_data + excluded.total_data, clients=excluded.clients
+            """, (bssid, essid, crypto, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), manufacturer, dbm_signal, channel,
+                  extended_capabilities, packet_length, json.dumps(existing_clients)))
 
             db_conn.commit()
             logger.info(f"AP updated: {device_dict[bssid]}")
@@ -189,12 +196,12 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                 logger.error("Client MAC is missing. Skipping packet.")
                 return
 
-            # **Check if client already exists**
+            # Check if client already exists in database
             cursor.execute("SELECT * FROM clients WHERE mac = ?", (client_mac,))
             existing_client = cursor.fetchone()
 
             if existing_client:
-                # **Update the existing client entry**
+                # Update existing client entry
                 cursor.execute("""
                     UPDATE clients SET ssid=?, last_seen=?, manufacturer=?, signal_strength=?, associated_ap=?, total_data=total_data + ?
                     WHERE mac=?
@@ -204,7 +211,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                 logger.info(f"Client updated in database: {client_mac}, Associated AP: {associated_ap if associated_ap else 'None'}")
 
             else:
-                # **Insert new client if not exists**
+                # Insert new client if not exists
                 cursor.execute("""
                     INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -214,7 +221,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
 
             db_conn.commit()
 
-            # **Ensure Clients Are Added to the AP's Clients List**
+            # Ensure Clients Are Added to the AP's Clients List
             if associated_ap and associated_ap in device_dict:
                 existing_clients = device_dict[associated_ap].get('clients', [])
                 if not any(client['mac'] == client_mac for client in existing_clients):
@@ -223,6 +230,12 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                         'manufacturer': get_manufacturer(client_mac, oui_mapping), 'signal_strength': dbm_signal
                     })
                     logger.info(f"Client {client_mac} associated with AP {associated_ap}")
+
+                # **Update Clients JSON Field in AP Table**
+                cursor.execute("""
+                    UPDATE access_points SET clients=? WHERE mac=?
+                """, (json.dumps(device_dict[associated_ap]['clients']), associated_ap))
+                db_conn.commit()
 
         elif packet.haslayer(Dot11ProbeResp):
             logger.debug("Parsing Dot11ProbeResp layer.")
@@ -243,16 +256,11 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                     'extended_capabilities': "No Extended Capabilities", 'clients': [], 'total_data': packet_length
                 }
 
-            # **Store Probe Response AP in Database**
+            # Store Probe Response AP in Database
             cursor.execute("""
-                INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(mac) DO UPDATE SET
-                ssid=excluded.ssid, encryption=excluded.encryption, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
-                signal_strength=excluded.signal_strength, channel=excluded.channel, extended_capabilities=excluded.extended_capabilities,
-                total_data=access_points.total_data + excluded.total_data
-            """, (bssid, essid, "Unknown", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), get_manufacturer(bssid, oui_mapping),
-                  dbm_signal, None, "No Extended Capabilities", packet_length))
+                UPDATE access_points SET total_data = total_data + ?, last_seen = ?, ssid = ?, manufacturer = ?, clients = ?
+                WHERE mac = ?
+            """, (packet_length, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), essid, get_manufacturer(bssid, oui_mapping), json.dumps(device_dict[bssid]['clients']), bssid))
 
             db_conn.commit()
             logger.info(f"Probe Response detected, stored as AP: {device_dict[bssid]}")
@@ -267,6 +275,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
 
     except Exception as e:
         logger.error(f"Error parsing packet: {e}")
+
 
 
 def update_frame_count(mac, frame_type, db_conn):
