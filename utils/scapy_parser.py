@@ -307,54 +307,30 @@ def process_pcap(pcap_file, db_conn):
         logger.error(f"Error processing PCAP file: {e}")
 
 
-def live_scan(interface, db_conn):
+def live_scan(pcap_file, db_conn, proc):
     """
-    Start a live capture using hcxdumptool and process packets in real-time.
-
-    Args:
-        interface: The wireless interface to use for monitoring.
-        db_conn: SQLite database connection.
+    Parse packets from a PCAP file in real-time while hcxdumptool captures.
+    - pcap_file: Path to the PCAP file being written.
+    - db_conn: SQLite database connection.
+    - proc: The hcxdumptool process to ensure it is not respawned.
     """
-    capture_file = os.path.join(CONFIG["capture_dir"], 'wmap.pcapng')
-    command = f"hcxdumptool -i {interface} -o {capture_file}"
+    logger.info(f"Waiting for {pcap_file} to be created...")
 
-    logger.info(f"Starting live capture with hcxdumptool: {command}")
-    process = subprocess.Popen(command, shell=True, preexec_fn=os.setsid)
+    while not os.path.exists(pcap_file):
+        time.sleep(1)  # Wait until hcxdumptool creates the file
+
+    logger.info(f"Processing live packets from {pcap_file}")
 
     try:
-        max_wait_time = 5  # Wait up to 5 seconds
-        wait_time = 0
-        while not os.path.exists(capture_file):
-            if wait_time >= max_wait_time:
-                logger.error(f"Capture file {capture_file} not created within {max_wait_time} seconds.")
-                return
-            time.sleep(1)
-            wait_time += 1
+        with PcapReader(pcap_file) as packets:
+            for packet in packets:
+                parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
 
-        logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
-
-        device_dict = {}
-        oui_mapping = parse_oui_file()
-
-        with PcapNgReader(capture_file) as pcap_reader:
-            for packet in pcap_reader:
-                try:
-                    parse_packet(packet, device_dict, oui_mapping, db_conn)
-
-                    store_results_in_db(device_dict, db_conn)
-
-                    db_conn.commit()
-                    logger.debug(f"Committed packet data to database (MACs: {list(device_dict.keys())})")
-
-                except Exception as e:
-                    logger.error(f"Error processing packet: {e}")
-
-    except KeyboardInterrupt:
-        logger.info("Live scan interrupted by user. Stopping hcxdumptool.")
-        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                if proc.poll() is not None:  # If hcxdumptool has stopped, exit loop
+                    logger.info("hcxdumptool process ended, stopping live scan.")
+                    break
 
     except Exception as e:
         logger.error(f"Error during live scanning: {e}")
 
-    finally:
-        logger.info("Closing database connection.")
+    logger.info("Live scan complete. Closing database connection.")

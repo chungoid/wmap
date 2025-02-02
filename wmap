@@ -72,14 +72,19 @@ def main():
         logger.debug(f"Capture file path set to: {capture_file}")
 
         # **Handle Active/Passive Scanning**
-        if args.active:
+        if args.active or args.passive:
             command = f"hcxdumptool -i {args.interface} -o {capture_file}"
-            logger.info(f"Starting active scan with command: {command}")
-            subprocess.run(command, shell=True)
-        elif args.passive:
-            command = f"hcxdumptool -i {args.interface} -w {capture_file} --disable_deauthentication --disable_proberequest --disable_association --disable_reassociation --disable_beacon"
-            logger.info(f"Starting passive scan with command: {command}")
-            subprocess.run(command, shell=True)
+
+            # Start hcxdumptool as a non-blocking subprocess
+            logger.info(f"Starting hcxdumptool: {command}")
+            proc = subprocess.Popen(command, shell=True)
+
+            try:
+                logger.info(f"Starting live scan on interface: {args.interface}")
+                scapy_parser.live_scan(capture_file, db_conn, proc)  # Pass capture file & process to live_scan
+            finally:
+                proc.terminate()
+                logger.info("Stopped hcxdumptool and live scan.")
 
         # **Start Web Server (if enabled)**
         if not args.no_webserver:
