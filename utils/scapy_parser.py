@@ -305,6 +305,15 @@ def process_pcap(pcap_file, db_conn):
         logger.error(f"Error processing PCAP file: {e}")
 
 
+import os
+import logging
+import time
+from scapy.utils import PcapReader
+from utils.setup_work import get_db_connection
+
+logger = logging.getLogger("scapy_parser")
+
+
 def live_scan(pcap_file, db_conn, proc):
     """
     Perform live packet processing while hcxdumptool is capturing.
@@ -316,19 +325,24 @@ def live_scan(pcap_file, db_conn, proc):
     """
     logger.info(f"Starting live parsing of {pcap_file} while hcxdumptool is running.")
 
+    device_dict = {}  # Store APs and clients in memory before inserting
+
     try:
-        while proc.poll() is None:  # Check if hcxdumptool is still running
+        while proc.poll() is None:  # While hcxdumptool is running
             if os.path.exists(pcap_file) and os.path.getsize(pcap_file) > 0:
                 logger.info(f"Processing live packets from {pcap_file}")
+
                 with PcapReader(pcap_file) as pcap_reader:
                     for packet in pcap_reader:
                         try:
-                            parse_packet(packet, {}, parse_oui_file(), db_conn)
+                            parse_packet(packet, device_dict, parse_oui_file(), db_conn)
                         except Exception as e:
                             logger.error(f"Error parsing live packet: {e}")
 
+                # **Now store APs and clients in DB**
+                store_results_in_db(device_dict, db_conn)
                 logger.info("Live parsing iteration complete. Waiting for new packets...")
-                time.sleep(5)
+                time.sleep(5)  # Adjust this to optimize real-time parsing
 
         logger.info("hcxdumptool stopped. Finalizing live scan.")
 
