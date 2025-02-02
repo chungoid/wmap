@@ -369,30 +369,38 @@ def process_pcap(pcap_file, db_conn):
 
 
 def live_scan(capture_file, db_conn):
-    """Live scan processing: Reads packets from hcxdumptool's output and updates the database in real-time."""
-    logger.info(f"Starting live parsing of {capture_file}")
+    """Live scan parsing with error handling for corrupted packets."""
+    logger.info(f"Starting live parsing on: {capture_file}")
 
     try:
-        # **Wait until capture file exists before proceeding**
         while not os.path.exists(capture_file):
             logger.info(f"Waiting for capture file: {capture_file}")
             time.sleep(3)
 
-        logger.info("Parsing packets in real-time... Press Ctrl+C to stop.")
+        logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 
-        # **Process packets in real-time**
         with PcapReader(capture_file) as pcap_reader:
-            oui_mapping = parse_oui_file()  # Load OUI mapping once
             for packet in pcap_reader:
                 try:
-                    parse_packet(packet, device_dict={}, oui_mapping=oui_mapping, db_conn=db_conn)
+                    parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
+
                 except Scapy_Exception as e:
                     logger.warning(f"Skipped corrupted packet: {e}")
-                    continue  # **Skip bad packets instead of stopping**
+                    continue  # Skip invalid packets instead of stopping
+
+                except ValueError as e:
+                    logger.warning(f"Malformed packet skipped: {e}")
+                    continue
+
+                except Exception as e:
+                    logger.error(f"Unexpected parsing error: {e}")
+                    continue
 
     except KeyboardInterrupt:
-        logger.info("Stopping live parsing.")
+        logger.info("Stopping live scan. Terminating hcxdumptool...")
+
     except Exception as e:
         logger.error(f"Unexpected error during live scanning: {e}")
+
     finally:
         logger.info("Closing database connection after live scanning.")
