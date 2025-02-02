@@ -157,16 +157,6 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                 bytes_to_hex_string(getattr(packet.getlayer(Dot11Elt, ID=127), 'info', None))
             )
 
-            # Ensure AP exists in device_dict and update total_data
-            if bssid in device_dict:
-                device_dict[bssid]['total_data'] += packet_length
-            else:
-                device_dict[bssid] = {
-                    'mac': bssid, 'ssid': essid, 'encryption': crypto, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'channel': channel,
-                    'extended_capabilities': extended_capabilities, 'clients': [], 'total_data': packet_length
-                }
-
             # Retrieve existing clients for this AP from the database
             cursor.execute("SELECT clients FROM access_points WHERE mac = ?", (bssid,))
             existing_clients = cursor.fetchone()
@@ -221,21 +211,22 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
 
             db_conn.commit()
 
-            # Ensure Clients Are Added to the AP's Clients List
-            if associated_ap and associated_ap in device_dict:
-                existing_clients = device_dict[associated_ap].get('clients', [])
-                if not any(client['mac'] == client_mac for client in existing_clients):
-                    device_dict[associated_ap]['clients'].append({
+            # **Ensure Clients Are Added to the AP's Clients List**
+            if associated_ap:
+                cursor.execute("SELECT clients FROM access_points WHERE mac = ?", (associated_ap,))
+                ap_clients = cursor.fetchone()
+                ap_clients = json.loads(ap_clients[0]) if ap_clients and ap_clients[0] else []
+
+                if client_mac not in [client['mac'] for client in ap_clients]:
+                    ap_clients.append({
                         'mac': client_mac, 'ssid': essid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'manufacturer': get_manufacturer(client_mac, oui_mapping), 'signal_strength': dbm_signal
                     })
-                    logger.info(f"Client {client_mac} associated with AP {associated_ap}")
-
-                # **Update Clients JSON Field in AP Table**
-                cursor.execute("""
-                    UPDATE access_points SET clients=? WHERE mac=?
-                """, (json.dumps(device_dict[associated_ap]['clients']), associated_ap))
-                db_conn.commit()
+                    cursor.execute("""
+                        UPDATE access_points SET clients=? WHERE mac=?
+                    """, (json.dumps(ap_clients), associated_ap))
+                    db_conn.commit()
+                    logger.info(f"Client {client_mac} added to AP {associated_ap}")
 
         elif packet.haslayer(Dot11ProbeResp):
             logger.debug("Parsing Dot11ProbeResp layer.")
@@ -247,23 +238,14 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                 logger.error("Probe Response missing BSSID. Skipping packet.")
                 return
 
-            if bssid in device_dict:
-                device_dict[bssid]['total_data'] += packet_length
-            else:
-                device_dict[bssid] = {
-                    'mac': bssid, 'ssid': essid, 'encryption': "Unknown", 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'manufacturer': get_manufacturer(bssid, oui_mapping), 'signal_strength': dbm_signal, 'channel': None,
-                    'extended_capabilities': "No Extended Capabilities", 'clients': [], 'total_data': packet_length
-                }
-
-            # Store Probe Response AP in Database
             cursor.execute("""
                 UPDATE access_points SET total_data = total_data + ?, last_seen = ?, ssid = ?, manufacturer = ?, clients = ?
                 WHERE mac = ?
-            """, (packet_length, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), essid, get_manufacturer(bssid, oui_mapping), json.dumps(device_dict[bssid]['clients']), bssid))
+            """, (packet_length, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), essid, get_manufacturer(bssid, oui_mapping),
+                  json.dumps(device_dict[bssid]['clients'] if bssid in device_dict else []), bssid))
 
             db_conn.commit()
-            logger.info(f"Probe Response detected, stored as AP: {device_dict[bssid]}")
+            logger.info(f"Probe Response detected, stored as AP: {device_dict[bssid] if bssid in device_dict else 'New AP'}")
 
         elif packet.haslayer(Dot11Deauth):
             frame_type = "deauth"
@@ -275,7 +257,6 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
 
     except Exception as e:
         logger.error(f"Error parsing packet: {e}")
-
 
 
 def update_frame_count(mac, frame_type, db_conn):
