@@ -25,34 +25,42 @@ else:
 
 
 def decode_extended_capabilities(data):
-    """Decode extended capabilities from packets."""
-    if isinstance(data, bytes):
-        data = data.hex()  # Convert bytes to hex string
-
-    if not isinstance(data, str) or len(data) < 2:
-        logger.debug("Extended capabilities data is invalid or too short.")
+    """Decode security-relevant Extended Capabilities from packets."""
+    if not isinstance(data, str):
+        logger.debug("Extended capabilities data is invalid or not a string.")
         return "No Extended Capabilities"
 
     try:
+        capabilities_bytes = bytes.fromhex(data)
         features = []
-        capabilities_bytes = bytes.fromhex(data)  # Convert hex string to bytes
 
-        # Iterate over each byte and check bit flags
-        for index, byte in enumerate(capabilities_bytes):
-            if byte & (1 << 0):
-                features.append(f"Extended Channel Switching (Byte {index})")
-            if byte & (1 << 1):
-                features.append(f"WNM Sleep Mode (Byte {index})")
-            if byte & (1 << 2):
-                features.append(f"TIM Broadcast (Byte {index})")
-            if byte & (1 << 3):
-                features.append(f"Support for Spectrum Management (Byte {index})")
-            if byte & (1 << 4):
-                features.append(f"Support for QOS Traffic Capability (Byte {index})")
-            if byte & (1 << 5):
-                features.append(f"Support for Emergency Services (Byte {index})")
+        # **1. Management Frame Protection (MFP) - Byte 1, Bit 2**
+        if len(capabilities_bytes) > 1 and not (capabilities_bytes[1] & (1 << 2)):
+            features.append("No Management Frame Protection")
 
-        return ", ".join(features) if features else "No Extended Capabilities"
+        # **2. BSS Transition (802.11v) - Byte 0, Bit 6**
+        if len(capabilities_bytes) > 0 and (capabilities_bytes[0] & (1 << 6)):
+            features.append("BSS Transition Enabled")
+
+        # **3. TDLS Support - Byte 3, Bits 0-2**
+        if len(capabilities_bytes) > 3:
+            if capabilities_bytes[3] & (1 << 0):
+                features.append("TDLS Supported")
+            if capabilities_bytes[3] & (1 << 1):
+                features.append("TDLS Prohibited Not Set")
+            if capabilities_bytes[3] & (1 << 2):
+                features.append("TDLS Channel Switching Allowed")
+
+        # **4. Opportunistic Key Caching (OKC) - Byte 4, Bit 0**
+        if len(capabilities_bytes) > 4 and (capabilities_bytes[4] & (1 << 0)):
+            features.append("Opportunistic Key Caching Enabled")
+
+        # **5. Extended Channel Switching - Byte 0, Bit 0**
+        if len(capabilities_bytes) > 0 and (capabilities_bytes[0] & (1 << 0)):
+            features.append("Extended Channel Switching Enabled")
+
+        return ", ".join(features) if features else "No Security Risks Detected"
+
     except Exception as e:
         logger.error(f"Failed to decode extended capabilities: {data} - {e}")
         return "No Extended Capabilities"
