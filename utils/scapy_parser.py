@@ -1,10 +1,14 @@
 import logging
 import os
+import signal
 import sqlite3
 import json
+import subprocess
 import time
 
 from datetime import datetime
+
+from scapy.error import Scapy_Exception
 from scapy.fields import FlagValue
 from scapy.layers.dot11 import (
     Dot11, Dot11Beacon, Dot11Auth, Dot11Elt, Dot11ProbeReq, Dot11AssoReq,
@@ -168,20 +172,60 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
             client_mac = getattr(packet[Dot11], 'addr2', '').lower()
             associated_ap = getattr(packet[Dot11], 'addr1', '').lower()
             essid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
+
             if not client_mac:
                 logger.error("Client MAC is missing. Skipping packet.")
                 return
+
+            client_info = {
+                'mac': client_mac,
+                'ssid': essid,
+                'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'manufacturer': get_manufacturer(client_mac, oui_mapping),
+                'signal_strength': dbm_signal,
+                'total_data': packet_length
+            }
+
             if associated_ap in device_dict:
-                client_info = {'mac': client_mac, 'ssid': essid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                               'manufacturer': get_manufacturer(client_mac, oui_mapping),
-                               'signal_strength': dbm_signal, 'total_data': packet_length}
                 existing_clients = device_dict[associated_ap].get('clients', [])
                 if not any(c['mac'] == client_mac for c in existing_clients):
                     device_dict[associated_ap].setdefault('clients', []).append(client_info)
                     logger.info(f"Client added to AP {associated_ap}: {client_info}")
 
+            else:
+                # **New Fix**: Store probe request clients properly
+                device_dict[client_mac] = {
+                    'mac': client_mac,
+                    'ssid': essid if essid else "Unknown",
+                    'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'manufacturer': get_manufacturer(client_mac, oui_mapping),
+                    'signal_strength': dbm_signal,
+                    'clients': [],
+                    'total_data': packet_length
+                }
+                logger.info(f"Standalone client detected: {client_info}")
+
         elif packet.haslayer(Dot11ProbeResp):
+            logger.debug("Parsing Dot11ProbeResp layer.")
             frame_type = "probe_resp"
+            bssid = getattr(packet[Dot11], 'addr2', '').lower()
+            essid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
+
+            if not bssid:
+                logger.error("Probe Response missing BSSID. Skipping packet.")
+                return
+
+            if bssid in device_dict:
+                device_dict[bssid]['total_data'] += packet_length
+            else:
+                # **New Fix**: Store probe responses as APs
+                device_dict[bssid] = {
+                    'mac': bssid, 'ssid': essid, 'encryption': "Unknown", 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'manufacturer': get_manufacturer(bssid, oui_mapping), 'signal_strength': dbm_signal, 'channel': None,
+                    'extended_capabilities': "No Extended Capabilities", 'clients': [], 'total_data': packet_length
+                }
+                logger.info(f"Probe Response detected, stored as AP: {device_dict[bssid]}")
+
         elif packet.haslayer(Dot11Auth):
             frame_type = "auth"
         elif packet.haslayer(Dot11Deauth):
@@ -276,14 +320,17 @@ def store_results_in_db(device_dict, db_conn):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (ap_info['mac'], ap_info['ssid'], encryption, ap_info['last_seen'], ap_info['manufacturer'],
                       ap_info['signal_strength'], ap_info['channel'], ap_info['extended_capabilities'], ap_info.get('total_data', 0)))
+
                 for client in ap_info.get('clients', []):
                     cursor.execute("""
-                    INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
+                    INSERT OR REPLACE INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (client['mac'], client['ssid'], client['last_seen'], client['manufacturer'], client['signal_strength'], ap_info['mac'], client.get('total_data', 0)))
+                    logger.info(f"Inserted client into database: {client}")
 
             except Exception as e:
                 logger.error(f"Error inserting AP {ap_info['mac']} into database: {e}")
+
         db_conn.commit()
     except Exception as e:
         logger.error(f"Error storing results in the database: {e}")
@@ -317,40 +364,39 @@ def process_pcap(pcap_file, db_conn):
 logger = logging.getLogger("scapy_parser")
 
 
-def live_scan(pcap_file, db_conn, proc):
-    """
-    Perform live packet processing while hcxdumptool is capturing.
+def live_scan(interface, db_conn, capture_file):
+    """Live scan with hcxdumptool, parsing packets in real-time while handling corrupted packets."""
+    logger.info(f"Starting live capture with hcxdumptool on {interface}, output: {capture_file}")
 
-    Args:
-        pcap_file: Path to the live PCAP file.
-        db_conn: SQLite database connection.
-        proc: The hcxdumptool process handle.
-    """
-    logger.info(f"Starting live parsing of {pcap_file} while hcxdumptool is running.")
-
-    device_dict = {}  # Store APs and clients in memory before inserting
+    hcxdumptool_cmd = f"hcxdumptool -i {interface} -o {capture_file}"
+    process = subprocess.Popen(hcxdumptool_cmd, shell=True, preexec_fn=os.setsid)
 
     try:
-        while proc.poll() is None:  # While hcxdumptool is running
-            if os.path.exists(pcap_file) and os.path.getsize(pcap_file) > 0:
-                logger.info(f"Processing live packets from {pcap_file}")
+        # **Ensure capture file exists before reading**
+        while not os.path.exists(capture_file):
+            logger.info(f"Waiting for capture file: {capture_file}")
+            time.sleep(1)
 
-                with PcapReader(pcap_file) as pcap_reader:
-                    for packet in pcap_reader:
-                        try:
-                            parse_packet(packet, device_dict, parse_oui_file(), db_conn)
-                        except Exception as e:
-                            logger.error(f"Error parsing live packet: {e}")
+        logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 
-                # **Now store APs and clients in DB**
-                store_results_in_db(device_dict, db_conn)
-                logger.info("Live parsing iteration complete. Waiting for new packets...")
-                time.sleep(5)  # Adjust this to optimize real-time parsing
+        with PcapReader(capture_file) as pcap_reader:
+            for packet in pcap_reader:
+                try:
+                    parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
 
-        logger.info("hcxdumptool stopped. Finalizing live scan.")
+                except Scapy_Exception as e:
+                    logger.warning(f"Skipped corrupted packet: {e}")
+                    continue  # **Skip invalid packets instead of stopping**
 
+                # **Check if hcxdumptool is still running**
+                if process.poll() is not None:
+                    logger.warning("hcxdumptool stopped unexpectedly. Restarting...")
+                    process = subprocess.Popen(hcxdumptool_cmd, shell=True, preexec_fn=os.setsid)
+
+    except KeyboardInterrupt:
+        logger.info("Stopping live scan. Terminating hcxdumptool...")
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
     except Exception as e:
-        logger.error(f"Error during live scanning: {e}")
-
+        logger.error(f"Unexpected error during live scanning: {e}")
     finally:
         logger.info("Closing database connection after live scanning.")
