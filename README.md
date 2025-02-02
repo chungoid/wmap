@@ -8,7 +8,7 @@ Supports capturing, parsing, storing, and analyzing live or previously captured 
 
 ```bash
 git clone https://github.com/chungoid/wmap.git
-cd wmap.py
+cd wmap
 ```
 ### Install Dependencies:
 ```
