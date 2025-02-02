@@ -25,7 +25,7 @@ example:
     sudo python3 wmap --upload 
     sudo python3 wmap --download
 
-python wmap.py [-h] [--active] [--passive] [-u [UPLOAD]] [-d [DOWNLOAD]] [--set-key SET_KEY] [--get-key] [--no-webserver] [--parse-existing PARSE_EXISTING] [interface]
+python wmap [-h] [--active] [--passive] [-u [UPLOAD]] [-d [DOWNLOAD]] [--set-key SET_KEY] [--get-key] [--no-webserver] [--parse-existing PARSE_EXISTING] [interface]
 
 Wireless capturing, parsing, and analyzing.
 
