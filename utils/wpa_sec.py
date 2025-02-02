@@ -7,7 +7,6 @@ from config.config import CONFIG
 
 logger = logging.getLogger('wpa_sec')
 
-
 def download_potfile(output_file, db_conn):
     """Download the potfile from WPA-SEC."""
     key = get_wpasec_key("wpa_sec_key", db_conn)
