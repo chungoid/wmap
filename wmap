@@ -3,7 +3,7 @@ import argparse
 import os
 import subprocess
 import logging
-from utils import wpa_sec, scapy_parser, setup_work
+from utils import wpa_sec, scapy_parser
 from config.config import CONFIG, setup_logging
 from utils.setup_work import get_db_connection, ensure_directories_and_database
 
