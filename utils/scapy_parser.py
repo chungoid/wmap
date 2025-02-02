@@ -24,54 +24,6 @@ if not os.path.exists(oui_file):
 else:
     print(f"OUI file found at {oui_file}")
 
-def update_device_dict(device_dict, packet_info, oui_mapping):
-    try:
-        mac = packet_info['Dot11Beacon'].get('bssid', '').lower()
-        if not isinstance(mac, str):
-            logger.error("Invalid BSSID. Skipping entry.")
-            return
-
-        ssid = packet_info['Dot11Beacon'].get('essid', '')
-        manufacturer = get_manufacturer(mac, oui_mapping)
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        device_dict[mac] = {
-            'mac': mac,
-            'ssid': ssid,
-            'encryption': packet_info['Dot11Beacon'].get('crypto', 'Unknown'),
-            'last_seen': timestamp,
-            'manufacturer': manufacturer,
-            'signal_strength': packet_info['Dot11Beacon'].get('dbm_signal'),
-            'channel': packet_info['Dot11Beacon'].get('channel'),
-            'extended_capabilities': packet_info['Dot11Beacon'].get('extended_capabilities'),
-        }
-        logger.info(f"AP added to device dict: {device_dict[mac]}")
-    except Exception as e:
-        logger.error(f"Error updating device dict: {e}")
-
-
-def parse_flag_value(value):
-    try:
-        if isinstance(value, FlagValue):
-            return int(value)
-        return value
-    except Exception as e:
-        logger.error(f"Failed to parse FlagValue: {e}")
-        return None
-
-def convert_to_serializable(obj):
-    if isinstance(obj, FlagValue):
-        return int(obj)
-    elif isinstance(obj, set):
-        return list(obj)
-    elif hasattr(obj, "__dict__"):
-        return vars(obj)
-    elif isinstance(obj, bytes):
-        return obj.decode('utf-8', 'ignore')
-    return obj
-
-def bytes_to_hex_string(byte_seq):
-    return byte_seq.hex() if byte_seq else None
 
 def decode_extended_capabilities(data):
     """Decode extended capabilities from packets."""
