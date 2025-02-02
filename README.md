@@ -8,7 +8,7 @@ Supports capturing, parsing, storing, and analyzing live or previously captured 
 
 ```bash
 git clone https://github.com/chungoid/wmap.git
-cd wmap
+cd wmap.py
 ```
 ### Install Dependencies:
 ```
@@ -20,10 +20,10 @@ pip install -r requirements.txt
 ## Usage
 ```
 example:
-    ./wmap --set-key <your key>
-    sudo ./wmap --active wlan0
-    ./wmap --upload 
-    ./wmap. --download
+    ./wmap.py --set-key <your key>
+    sudo ./wmap.py --active wlan0
+    ./wmap.py --upload 
+    ./wmap.py --download
 
 python wmap.py [-h] [--active] [--passive] [-u [UPLOAD]] [-d [DOWNLOAD]] [--set-key SET_KEY] [--get-key] [--no-webserver] [--parse-existing PARSE_EXISTING] [interface]
 

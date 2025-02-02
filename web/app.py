@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # Paths
 QUERY_FILE = os.path.join('config', 'queries.yaml')
-DATABASE_FILE = os.path.join('database', 'wmap.db')
+DATABASE_FILE = os.path.join('database', 'wmap.py.db')
 
 # Load Queries
 queries = load_queries(QUERY_FILE)

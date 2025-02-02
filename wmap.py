@@ -8,6 +8,7 @@ from config.config import CONFIG, setup_logging
 from utils import wpa_sec, scapy_parser
 from utils.setup_work import get_db_connection, ensure_directories_and_database
 
+
 def main():
     """Main function for wmap: handling scanning, parsing, and WPA-SEC interactions."""
     # Ensure directories, initialize database, and setup logging
@@ -34,8 +35,10 @@ def main():
                             help="Download potfile from WPA-SEC (default path if no path provided).")
         parser.add_argument("--set-key", type=str, help="Set the WPA-SEC key in the database.")
         parser.add_argument("--get-key", action="store_true", help="Get the WPA-SEC key from the database.")
-        parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
-        parser.add_argument("--parse-existing", type=str, help="Parse an existing capture file (e.g., /path/to/file.pcap).")
+        parser.add_argument("--no-webserver", action="store_true",
+                            help="Disable web server and run CLI-only operations.")
+        parser.add_argument("--parse-existing", type=str,
+                            help="Parse an existing capture file (e.g., /path/to/file.pcap).")
 
         args = parser.parse_args()
         logger.debug(f"Parsed arguments: {args}")
@@ -90,6 +93,7 @@ def main():
             pass
 
         logger.info("wmap application finished.")
+
 
 if __name__ == "__main__":
     main()

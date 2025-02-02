@@ -11,14 +11,14 @@ CONFIG = {
     "capture_dir": os.path.join(BASE_DIR, "capture"),
     "web_dir": os.path.join(BASE_DIR, "web"),
     "config_dir": os.path.join(BASE_DIR, "config"),
-    "pcap_file": "wmap.pcapng",
+    "pcap_file": "wmap.py.pcapng",
 }
 
 # Insert in CONFIG dictionary above if you want
 #"tests_dir": os.path.join(BASE_DIR, "tests")
 
 # Default Paths
-DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.db")
+DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.py.db")
 DEFAULT_OUI_PATH = os.path.abspath(os.path.join(CONFIG["config_dir"], "oui_lowercase.txt"))
 
 # Web Server Settings
@@ -29,7 +29,7 @@ WEB_SERVER = {
 
 # Centralized log paths for all modules
 LOG_FILES = {
-    "wmap": os.path.join(CONFIG["log_dir"], "wmap.log"),
+    "wmap.py": os.path.join(CONFIG["log_dir"], "wmap.py.log"),
     "scapy_parser": os.path.join(CONFIG["log_dir"], "scapy_parser.log"),
     "wpa_sec": os.path.join(CONFIG["log_dir"], "wpa_sec.log"),
     "setup_work": os.path.join(CONFIG["log_dir"], "setup_work.log"),
