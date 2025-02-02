@@ -214,6 +214,16 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
 
             db_conn.commit()
 
+            # **Ensure Clients Are Added to the AP's Clients List**
+            if associated_ap and associated_ap in device_dict:
+                existing_clients = device_dict[associated_ap].get('clients', [])
+                if not any(client['mac'] == client_mac for client in existing_clients):
+                    device_dict[associated_ap]['clients'].append({
+                        'mac': client_mac, 'ssid': essid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'manufacturer': get_manufacturer(client_mac, oui_mapping), 'signal_strength': dbm_signal
+                    })
+                    logger.info(f"Client {client_mac} associated with AP {associated_ap}")
+
         elif packet.haslayer(Dot11ProbeResp):
             logger.debug("Parsing Dot11ProbeResp layer.")
             frame_type = "probe_resp"
@@ -257,8 +267,6 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
 
     except Exception as e:
         logger.error(f"Error parsing packet: {e}")
-
-
 
 
 def update_frame_count(mac, frame_type, db_conn):
