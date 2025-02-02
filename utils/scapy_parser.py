@@ -7,11 +7,11 @@ import time
 
 from datetime import datetime
 from scapy.fields import FlagValue
+from scapy.utils import PcapReader
 from scapy.layers.dot11 import (
     Dot11, Dot11Beacon, Dot11Auth, Dot11Elt, Dot11ProbeReq, Dot11AssoReq,
     Dot11ProbeResp, RadioTap, Dot11Deauth
 )
-from scapy.utils import PcapReader, PcapNgReader
 from config.config import DEFAULT_OUI_PATH, CONFIG
 
 logger = logging.getLogger("scapy_parser")
@@ -328,12 +328,12 @@ def live_scan(interface, db_conn):
     process = subprocess.Popen(command, shell=True, preexec_fn=os.setsid)
 
     try:
-        # **Wait for the capture file to appear**
-        max_wait_time = 5  # Maximum wait time in seconds
+        # **Ensure the capture file is created before proceeding**
+        max_wait_time = 5  # Wait up to 5 seconds
         wait_time = 0
         while not os.path.exists(capture_file):
             if wait_time >= max_wait_time:
-                logger.error(f"Capture file {capture_file} was not created in time.")
+                logger.error(f"Capture file {capture_file} not created within {max_wait_time} seconds.")
                 return
             time.sleep(1)
             wait_time += 1
@@ -345,13 +345,19 @@ def live_scan(interface, db_conn):
 
         with PcapNgReader(capture_file) as pcap_reader:
             for packet in pcap_reader:
-                parse_packet(packet, device_dict, oui_mapping, db_conn)
+                try:
+                    # **Parse the packet**
+                    parse_packet(packet, device_dict, oui_mapping, db_conn)
 
-                # **Immediately store results in the database**
-                store_results_in_db(device_dict, db_conn)
+                    # **Immediately store results in the database**
+                    store_results_in_db(device_dict, db_conn)
 
-                # **Commit after every packet for real-time updates**
-                db_conn.commit()
+                    # **Commit changes to ensure data is saved**
+                    db_conn.commit()
+                    logger.debug(f"Committed packet data to database (MACs: {list(device_dict.keys())})")
+
+                except Exception as e:
+                    logger.error(f"Error processing packet: {e}")
 
     except KeyboardInterrupt:
         logger.info("Live scan interrupted by user. Stopping hcxdumptool.")
