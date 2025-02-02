@@ -307,28 +307,33 @@ def process_pcap(pcap_file, db_conn):
 
 def live_scan(pcap_file, db_conn, proc):
     """
-    Parse packets from a PCAP file in real-time while hcxdumptool captures.
-    - pcap_file: Path to the PCAP file being written.
-    - db_conn: SQLite database connection.
-    - proc: The hcxdumptool process to ensure it is not respawned.
+    Perform live packet processing while hcxdumptool is capturing.
+
+    Args:
+        pcap_file: Path to the live PCAP file.
+        db_conn: SQLite database connection.
+        proc: The hcxdumptool process handle.
     """
-    logger.info(f"Waiting for {pcap_file} to be created...")
-
-    while not os.path.exists(pcap_file):
-        time.sleep(1)  # Wait until hcxdumptool creates the file
-
-    logger.info(f"Processing live packets from {pcap_file}")
+    logger.info(f"Starting live parsing of {pcap_file} while hcxdumptool is running.")
 
     try:
-        with PcapReader(pcap_file) as packets:
-            for packet in packets:
-                parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
+        while proc.poll() is None:  # Check if hcxdumptool is still running
+            if os.path.exists(pcap_file) and os.path.getsize(pcap_file) > 0:
+                logger.info(f"Processing live packets from {pcap_file}")
+                with PcapReader(pcap_file) as pcap_reader:
+                    for packet in pcap_reader:
+                        try:
+                            parse_packet(packet, {}, parse_oui_file(), db_conn)
+                        except Exception as e:
+                            logger.error(f"Error parsing live packet: {e}")
 
-                if proc.poll() is not None:  # If hcxdumptool has stopped, exit loop
-                    logger.info("hcxdumptool process ended, stopping live scan.")
-                    break
+                logger.info("Live parsing iteration complete. Waiting for new packets...")
+                time.sleep(5)
+
+        logger.info("hcxdumptool stopped. Finalizing live scan.")
 
     except Exception as e:
         logger.error(f"Error during live scanning: {e}")
 
-    logger.info("Live scan complete. Closing database connection.")
+    finally:
+        logger.info("Closing database connection after live scanning.")
