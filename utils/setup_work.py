@@ -51,8 +51,7 @@ def initialize_db(db_conn):
         logger.info("Creating clients table")
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS clients (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            mac TEXT,
+            mac TEXT PRIMARY KEY,
             ssid TEXT,
             last_seen TEXT,
             manufacturer TEXT,
