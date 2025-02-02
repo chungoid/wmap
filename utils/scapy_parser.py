@@ -372,8 +372,10 @@ def live_scan(capture_file, db_conn, process):
     """Live scan parsing that continuously reads from the capture file."""
     logger.info(f"Starting live parsing on: {capture_file}")
 
+    device_dict = {}  # **Ensure persistent tracking of detected devices**
+
     try:
-        # Wait until the capture file is created
+        # **Wait until the capture file is created**
         while not os.path.exists(capture_file):
             logger.info(f"Waiting for capture file: {capture_file}")
             time.sleep(3)
@@ -383,9 +385,17 @@ def live_scan(capture_file, db_conn, process):
         while process.poll() is None:  # **Ensure hcxdumptool is still running**
             try:
                 with PcapReader(capture_file) as pcap_reader:
+                    packet_count = 0
                     for packet in pcap_reader:
                         try:
-                            parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
+                            parse_packet(packet, device_dict, oui_mapping=parse_oui_file(), db_conn=db_conn)
+                            packet_count += 1
+
+                            # **Commit to DB every 50 packets**
+                            if packet_count % 50 == 0:
+                                store_results_in_db(device_dict, db_conn)
+                                db_conn.commit()
+
                         except Scapy_Exception as e:
                             logger.warning(f"Skipped corrupted packet: {e}")
                             continue
@@ -395,7 +405,9 @@ def live_scan(capture_file, db_conn, process):
                         except Exception as e:
                             logger.error(f"Unexpected parsing error: {e}")
                             continue
-                time.sleep(1)  # **Wait before re-opening the file for new packets**
+
+                time.sleep(1)  # **Allow time for new packets before reopening the file**
+
             except FileNotFoundError:
                 logger.warning(f"Capture file {capture_file} not found. Waiting...")
                 time.sleep(2)
@@ -407,4 +419,8 @@ def live_scan(capture_file, db_conn, process):
         os.killpg(os.getpgid(process.pid), signal.SIGTERM)
 
     finally:
+        # **Final DB Commit to ensure latest results are saved**
+        store_results_in_db(device_dict, db_conn)
+        db_conn.commit()
         logger.info("Closing database connection after live scanning.")
+
