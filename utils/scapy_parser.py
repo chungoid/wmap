@@ -138,6 +138,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
         packet_length = len(packet) if packet else 0
         frame_type = None
         dbm_signal = getattr(packet[RadioTap], 'dBm_AntSignal', None) if packet.haslayer(RadioTap) else None
+        cursor = db_conn.cursor()
 
         if packet.haslayer(Dot11Beacon):
             logger.debug("Parsing Dot11Beacon layer.")
@@ -146,6 +147,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
             if not bssid:
                 logger.error("BSSID missing from packet.")
                 return
+
             essid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
             stats = packet[Dot11Beacon].network_stats()
             channel = stats.get('channel', 0)
@@ -164,6 +166,17 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                     'extended_capabilities': extended_capabilities, 'clients': [], 'total_data': packet_length
                 }
 
+            # **Update or Insert AP into database**
+            cursor.execute("""
+                INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mac) DO UPDATE SET
+                ssid=excluded.ssid, encryption=excluded.encryption, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
+                signal_strength=excluded.signal_strength, channel=excluded.channel, extended_capabilities=excluded.extended_capabilities,
+                total_data=access_points.total_data + excluded.total_data
+            """, (bssid, essid, crypto, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), manufacturer, dbm_signal, channel, extended_capabilities, packet_length))
+
+            db_conn.commit()
             logger.info(f"AP updated: {device_dict[bssid]}")
 
         elif packet.haslayer(Dot11ProbeReq):
@@ -177,33 +190,15 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                 logger.error("Client MAC is missing. Skipping packet.")
                 return
 
-            client_info = {
-                'mac': client_mac,
-                'ssid': essid,
-                'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'manufacturer': get_manufacturer(client_mac, oui_mapping),
-                'signal_strength': dbm_signal,
-                'total_data': packet_length
-            }
+            # **Log client even if not associated with an AP**
+            cursor.execute("""
+                INSERT OR IGNORE INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (client_mac, essid if essid else "Unknown", datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                  get_manufacturer(client_mac, oui_mapping), dbm_signal, associated_ap if associated_ap else None, packet_length))
 
-            if associated_ap in device_dict:
-                existing_clients = device_dict[associated_ap].get('clients', [])
-                if not any(c['mac'] == client_mac for c in existing_clients):
-                    device_dict[associated_ap].setdefault('clients', []).append(client_info)
-                    logger.info(f"Client added to AP {associated_ap}: {client_info}")
-
-            else:
-                # **New Fix**: Store probe request clients properly
-                device_dict[client_mac] = {
-                    'mac': client_mac,
-                    'ssid': essid if essid else "Unknown",
-                    'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'manufacturer': get_manufacturer(client_mac, oui_mapping),
-                    'signal_strength': dbm_signal,
-                    'clients': [],
-                    'total_data': packet_length
-                }
-                logger.info(f"Standalone client detected: {client_info}")
+            db_conn.commit()
+            logger.info(f"Client recorded in database: {client_mac}, Associated AP: {associated_ap if associated_ap else 'None'}")
 
         elif packet.haslayer(Dot11ProbeResp):
             logger.debug("Parsing Dot11ProbeResp layer.")
@@ -218,20 +213,41 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
             if bssid in device_dict:
                 device_dict[bssid]['total_data'] += packet_length
             else:
-                # **New Fix**: Store probe responses as APs
                 device_dict[bssid] = {
                     'mac': bssid, 'ssid': essid, 'encryption': "Unknown", 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     'manufacturer': get_manufacturer(bssid, oui_mapping), 'signal_strength': dbm_signal, 'channel': None,
                     'extended_capabilities': "No Extended Capabilities", 'clients': [], 'total_data': packet_length
                 }
-                logger.info(f"Probe Response detected, stored as AP: {device_dict[bssid]}")
 
-        elif packet.haslayer(Dot11Auth):
-            frame_type = "auth"
-        elif packet.haslayer(Dot11Deauth):
-            frame_type = "deauth"
-        elif packet.haslayer(Dot11AssoReq):
-            frame_type = "assoc_req"
+            # **Store Probe Response AP in Database**
+            cursor.execute("""
+                INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mac) DO UPDATE SET
+                ssid=excluded.ssid, encryption=excluded.encryption, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
+                signal_strength=excluded.signal_strength, channel=excluded.channel, extended_capabilities=excluded.extended_capabilities,
+                total_data=access_points.total_data + excluded.total_data
+            """, (bssid, essid, "Unknown", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), get_manufacturer(bssid, oui_mapping),
+                  dbm_signal, None, "No Extended Capabilities", packet_length))
+
+            db_conn.commit()
+            logger.info(f"Probe Response detected, stored as AP: {device_dict[bssid]}")
+
+        elif packet.haslayer(Dot11Auth) or packet.haslayer(Dot11AssoReq):
+            frame_type = "auth" if packet.haslayer(Dot11Auth) else "assoc_req"
+            client_mac = getattr(packet[Dot11], 'addr2', '').lower()
+            ap_mac = getattr(packet[Dot11], 'addr1', '').lower()
+
+            if client_mac and ap_mac:
+                logger.info(f"Client {client_mac} attempting {frame_type} with AP {ap_mac}")
+
+                cursor.execute("""
+                    INSERT OR IGNORE INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (client_mac, "", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), get_manufacturer(client_mac, oui_mapping),
+                      dbm_signal, ap_mac, packet_length))
+
+                db_conn.commit()
 
         if frame_type:
             device_mac = getattr(packet[Dot11], 'addr2', '').lower()
@@ -240,6 +256,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
 
     except Exception as e:
         logger.error(f"Error parsing packet: {e}")
+
 
 
 def update_frame_count(mac, frame_type, db_conn):
