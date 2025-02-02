@@ -28,9 +28,9 @@ def initialize_db(db_conn):
     """Initialize the SQLite database with the required schema."""
     try:
         logger.info("Initializing database...")
-        cursor = db_conn.cursor()  # Now db_conn is correctly passed as a connection object
+        cursor = db_conn.cursor()
 
-        # Create tables
+        # Create access_points table with frame_counts JSON column
         logger.info("Creating access_points table")
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS access_points (
@@ -42,11 +42,9 @@ def initialize_db(db_conn):
             manufacturer TEXT,
             signal_strength INTEGER,
             channel INTEGER,
-            rates TEXT,
             extended_capabilities TEXT,
-            ht_capabilities TEXT,
-            vht_capabilities TEXT,
-            total_data INTEGER DEFAULT 0  -- New field for total data usage in bytes
+            total_data INTEGER DEFAULT 0,
+            frame_counts TEXT DEFAULT '{}'  -- Stores frame counts as JSON
         )
         """)
 
@@ -60,22 +58,8 @@ def initialize_db(db_conn):
             manufacturer TEXT,
             signal_strength INTEGER,
             associated_ap TEXT,
-            total_data INTEGER DEFAULT 0,  -- Track data usage for clients too
+            total_data INTEGER DEFAULT 0,
             FOREIGN KEY (associated_ap) REFERENCES access_points(mac)
-        )
-        """)
-
-        logger.info("Creating frame_counts table")
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS frame_counts (
-            mac TEXT PRIMARY KEY,
-            beacon INTEGER DEFAULT 0,
-            probe_req INTEGER DEFAULT 0,
-            probe_resp INTEGER DEFAULT 0,
-            auth INTEGER DEFAULT 0,
-            deauth INTEGER DEFAULT 0,
-            assoc_req INTEGER DEFAULT 0,
-            FOREIGN KEY (mac) REFERENCES access_points(mac) ON DELETE CASCADE
         )
         """)
 
@@ -104,6 +88,7 @@ def initialize_db(db_conn):
         logger.info("Database initialized successfully.")
     except sqlite3.Error as e:
         logger.error(f"Error initializing database: {e}")
+
 
 def ensure_directories_and_database():
     """

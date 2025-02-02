@@ -1,15 +1,17 @@
 import logging
 import os
 import sqlite3
+import json
 import time
 
 from datetime import datetime
 from scapy.fields import FlagValue
-from scapy.utils import PcapReader
 from scapy.layers.dot11 import (
     Dot11, Dot11Beacon, Dot11Auth, Dot11Elt, Dot11ProbeReq, Dot11AssoReq,
     Dot11ProbeResp, RadioTap, Dot11Deauth
 )
+from scapy.utils import PcapReader
+
 from config.config import DEFAULT_OUI_PATH
 
 logger = logging.getLogger("scapy_parser")
@@ -196,28 +198,36 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
         logger.error(f"Error parsing packet: {e}")
 
 
-def update_frame_count(device_mac, frame_type, db_conn):
-    """Update frame count for a device in the database."""
+def update_frame_count(mac, frame_type, db_conn):
+    """
+    Update frame type counts inside the `access_points` table as JSON.
+    """
     try:
         cursor = db_conn.cursor()
 
-        logger.debug(f"Updating frame count for {device_mac}: {frame_type}")
+        # Retrieve current frame counts
+        cursor.execute("SELECT frame_counts FROM access_points WHERE mac = ?", (mac,))
+        result = cursor.fetchone()
 
-        cursor.execute("""
-            INSERT INTO frame_counts (mac, frame_type, count) 
-            VALUES (?, ?, 1) 
-            ON CONFLICT(mac, frame_type) 
-            DO UPDATE SET count = count + 1;
-        """, (device_mac, frame_type))
+        if result is None:
+            logger.warning(f"MAC {mac} not found in access_points. Skipping frame count update.")
+            return
 
+        # Convert from JSON or initialize empty dict
+        frame_counts = json.loads(result[0]) if result[0] else {}
+
+        # Increment frame count
+        frame_counts[frame_type] = frame_counts.get(frame_type, 0) + 1
+
+        # Update database
+        cursor.execute("UPDATE access_points SET frame_counts = ? WHERE mac = ?",
+                       (json.dumps(frame_counts), mac))
         db_conn.commit()
-        logger.info(f"Updated frame count for {device_mac}: {frame_type}")
 
-    except sqlite3.Error as e:
-        logger.error(f"Database error updating frame count for {device_mac}: {e}")
+        logger.debug(f"Updated frame_counts for {mac}: {frame_counts}")
 
     except Exception as e:
-        logger.error(f"Unexpected error updating frame count for {device_mac}: {e}")
+        logger.error(f"Error updating frame count for {mac}: {e}")
 
 
 def update_total_data(mac, packet_length, db_conn):
@@ -303,13 +313,6 @@ def process_pcap(pcap_file, db_conn):
 
     except Exception as e:
         logger.error(f"Error processing PCAP file: {e}")
-
-
-import os
-import logging
-import time
-from scapy.utils import PcapReader
-from utils.setup_work import get_db_connection
 
 logger = logging.getLogger("scapy_parser")
 
