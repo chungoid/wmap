@@ -274,7 +274,7 @@ def store_results_in_db(device_dict, db_conn):
                 else:  # Access Point
                     encryption = ",".join(device_info['encryption']) if isinstance(device_info.get('encryption', ''), set) else device_info.get('encryption', '')
 
-                    # ✅ **Log Extended Capabilities for Debugging**
+                    # **Log Extended Capabilities for Debugging**
                     logger.debug(f"Storing Extended Capabilities for {mac}: {device_info['extended_capabilities']}")
 
                     cursor.execute("""
