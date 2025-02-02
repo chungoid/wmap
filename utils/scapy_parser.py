@@ -368,17 +368,19 @@ def process_pcap(pcap_file, db_conn):
         logger.error(f"Error processing PCAP file: {e}")
 
 
-def live_scan(capture_file, db_conn):
-    """Live scan parsing with error handling for corrupted packets."""
+def live_scan(interface, db_conn, capture_file, process):
+    """Live scan parsing with real-time packet processing and error handling."""
     logger.info(f"Starting live parsing on: {capture_file}")
 
     try:
+        # **Wait for capture file to be created**
         while not os.path.exists(capture_file):
             logger.info(f"Waiting for capture file: {capture_file}")
             time.sleep(3)
 
         logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 
+        # **Process packets as they are written to the capture file**
         with PcapReader(capture_file) as pcap_reader:
             for packet in pcap_reader:
                 try:
@@ -386,7 +388,7 @@ def live_scan(capture_file, db_conn):
 
                 except Scapy_Exception as e:
                     logger.warning(f"Skipped corrupted packet: {e}")
-                    continue  # Skip invalid packets instead of stopping
+                    continue  # **Skip invalid packets instead of stopping**
 
                 except ValueError as e:
                     logger.warning(f"Malformed packet skipped: {e}")
@@ -396,8 +398,17 @@ def live_scan(capture_file, db_conn):
                     logger.error(f"Unexpected parsing error: {e}")
                     continue
 
+                # **Check if hcxdumptool is still running**
+                if process.poll() is not None:
+                    logger.warning("hcxdumptool stopped unexpectedly. Restarting...")
+                    process = subprocess.Popen(
+                        f"hcxdumptool -i {interface} -o {capture_file}",
+                        shell=True, preexec_fn=os.setsid
+                    )
+
     except KeyboardInterrupt:
         logger.info("Stopping live scan. Terminating hcxdumptool...")
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)  # **Terminate hcxdumptool properly**
 
     except Exception as e:
         logger.error(f"Unexpected error during live scanning: {e}")

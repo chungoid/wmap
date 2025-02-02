@@ -1,74 +1,98 @@
 #!/usr/bin/env Python3
 import os
 import argparse
-import signal
 import subprocess
 import logging
-import time
 
 from config.config import CONFIG, setup_logging
-from utils import scapy_parser
-from utils.setup_work import get_db_connection, ensure_directories_and_database
-
+from utils import scapy_parser, wpa_sec, setup_work
+from utils.setup_work import get_db_connection
 
 
 def main():
-    """Main function to handle CLI arguments and manage scanning operations."""
-    ensure_directories_and_database()
+    """Main function to handle scanning, packet parsing, and WPA-SEC interactions."""
+    # **Initialize Logging & Directories**
+    setup_work.ensure_directories_and_database()
     setup_logging()
     logger = logging.getLogger("wmap")
     logger.info("Starting wmap application.")
 
-    parser = argparse.ArgumentParser(description='Wireless capturing, parsing, and analyzing.')
+    # **Initialize Argparse**
+    parser = argparse.ArgumentParser(description="Wireless capturing, parsing, and analyzing.")
+
+    # **Add Arguments**
     parser.add_argument("--active", action="store_true", help="Enable active scanning mode")
     parser.add_argument("--passive", action="store_true", help="Enable passive scanning mode")
-    parser.add_argument("interface", nargs="?", help="Wireless interface name (required for live scanning)")
-    parser.add_argument("--parse-existing", type=str, help="Parse an existing PCAP file (e.g., /path/to/file.pcap)")
+    parser.add_argument("interface", nargs="?", help="Name of the wireless interface (required for scanning)")
+    parser.add_argument("--parse-existing", type=str, help="Parse an existing capture file (e.g., /path/to/file.pcap)")
+    parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"], help="Upload PCAP(s) to WPA-SEC")
+    parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
+                        help="Download potfile from WPA-SEC")
+    parser.add_argument("--set-key", type=str, help="Set the WPA-SEC API key in the database.")
+    parser.add_argument("--get-key", action="store_true", help="Retrieve the WPA-SEC API key from the database.")
+    parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
 
     args = parser.parse_args()
     logger.debug(f"Parsed arguments: {args}")
 
+    # **Ensure capture directory exists**
+    os.makedirs(CONFIG["capture_dir"], exist_ok=True)
+    logger.info(f"Capture directory ensured: {CONFIG['capture_dir']}")
+
+    # **Open a Single Database Connection**
     with get_db_connection() as db_conn:
         logger.info("Database connection established.")
 
-        # **Handle parsing of an existing capture file**
+        # **Handle WPA-SEC related actions**
+        if wpa_sec.handle_wpa_sec_actions(args, db_conn):
+            logger.info("Handled WPA-SEC related action. Exiting.")
+            return
+
+        # **Handle parsing of an existing PCAP file**
         if args.parse_existing:
             logger.info(f"Parsing existing file: {args.parse_existing}")
             scapy_parser.process_pcap(args.parse_existing, db_conn)
             logger.info("Parsing and storing complete.")
             return
 
-        capture_file = os.path.join(CONFIG["capture_dir"], "wmap.pcapng")
-        logger.debug(f"Capture file path set to: {capture_file}")
-
-        # **Ensure interface is provided for scanning modes**
+        # **Ensure an interface is provided for scanning**
         if not args.interface:
             logger.error("An interface must be specified for active or passive scanning modes.")
             parser.error("An interface must be specified for active or passive scanning modes.")
 
+        # **Define capture file path**
+        capture_file = os.path.join(CONFIG["capture_dir"], "wmap.pcapng")
+        logger.debug(f"Capture file path set to: {capture_file}")
+
         # **Start hcxdumptool scanning**
-        hcxdumptool_cmd = (
-            f"hcxdumptool -i {args.interface} -o {capture_file} --enable_status=1"
-            if args.active else
-            f"hcxdumptool -i {args.interface} -w {capture_file} --disable_deauthentication --disable_proberequest"
-        )
-        logger.info(f"Starting hcxdumptool with command: {hcxdumptool_cmd}")
+        if args.active:
+            hcxdumptool_cmd = f"hcxdumptool -i {args.interface} -o {capture_file}"
+            logger.info(f"Starting active scan with command: {hcxdumptool_cmd}")
+
+        elif args.passive:
+            hcxdumptool_cmd = (
+                f"hcxdumptool -i {args.interface} -w {capture_file} "
+                f"--disable_deauthentication --disable_proberequest --disable_association --disable_reassociation"
+            )
+            logger.info(f"Starting passive scan with command: {hcxdumptool_cmd}")
+
+        else:
+            logger.error("No scanning mode selected. Exiting.")
+            return
+
+        # **Execute the command**
         process = subprocess.Popen(hcxdumptool_cmd, shell=True, preexec_fn=os.setsid)
 
-        try:
-            # **Wait for capture file before parsing**
-            while not os.path.exists(capture_file):
-                logger.info(f"Waiting for capture file: {capture_file}")
-                time.sleep(3)
+        # **Start Live Scanning & Parsing**
+        scapy_parser.live_scan(args.interface, db_conn, capture_file, process)
 
-            # **Start real-time parsing**
-            scapy_parser.live_scan(capture_file, db_conn)
+        # **Start Web Server (if enabled)**
+        if not args.no_webserver:
+            logger.info("Starting web server.")
+            pass
 
-        except KeyboardInterrupt:
-            logger.info("Stopping hcxdumptool...")
-            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-        finally:
-            logger.info("wmap application finished.")
+        logger.info("wmap application finished.")
+
 
 if __name__ == "__main__":
     main()
