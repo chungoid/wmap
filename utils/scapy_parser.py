@@ -75,18 +75,32 @@ def bytes_to_hex_string(byte_seq):
 
 def decode_extended_capabilities(data):
     """Decode extended capabilities from packets."""
-    if not isinstance(data, str):
-        logger.debug("Extended capabilities data is invalid or not a string.")
+    if isinstance(data, bytes):
+        data = data.hex()  # Convert bytes to hex string
+
+    if not isinstance(data, str) or len(data) < 2:
+        logger.debug("Extended capabilities data is invalid or too short.")
         return "No Extended Capabilities"
+
     try:
-        capabilities = int(data, 16)
         features = []
-        if capabilities & (1 << 0):
-            features.append("Extended Channel Switching")
-        if capabilities & (1 << 1):
-            features.append("WNM Sleep Mode")
-        if capabilities & (1 << 2):
-            features.append("TIM Broadcast")
+        capabilities_bytes = bytes.fromhex(data)  # Convert hex string to bytes
+
+        # Iterate over each byte and check bit flags
+        for index, byte in enumerate(capabilities_bytes):
+            if byte & (1 << 0):
+                features.append(f"Extended Channel Switching (Byte {index})")
+            if byte & (1 << 1):
+                features.append(f"WNM Sleep Mode (Byte {index})")
+            if byte & (1 << 2):
+                features.append(f"TIM Broadcast (Byte {index})")
+            if byte & (1 << 3):
+                features.append(f"Support for Spectrum Management (Byte {index})")
+            if byte & (1 << 4):
+                features.append(f"Support for QOS Traffic Capability (Byte {index})")
+            if byte & (1 << 5):
+                features.append(f"Support for Emergency Services (Byte {index})")
+
         return ", ".join(features) if features else "No Extended Capabilities"
     except Exception as e:
         logger.error(f"Failed to decode extended capabilities: {data} - {e}")
@@ -190,14 +204,15 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                 while isinstance(elt, Dot11Elt):
                     if elt.ID == 127:  # Extended Capabilities Tag
                         try:
-                            hex_data = bytes_to_hex_string(elt.info)  # Use Utility Function
-                            if hex_data and len(hex_data) > 2:  # Ensure Valid Short Hex String
+                            hex_data = elt.info.hex()
+                            logger.debug(f"Raw Extended Capabilities Data for {mac}: {hex_data}")
+                            if len(hex_data) > 2:  # Ensure it's a valid short hex string
                                 extended_capabilities = decode_extended_capabilities(hex_data)
                         except Exception as e:
                             logger.error(f"Failed to process extended capabilities: {e}")
                             extended_capabilities = "No Extended Capabilities"  # Fallback
                         break
-                    elt = elt.payload  # Move to Next Information Element (IE)
+                    elt = elt.payload  # Move to the next Information Element (IE)
 
             # **Ensure AP exists in device_dict**
             if mac not in device_dict:
