@@ -10,7 +10,7 @@ from scapy.fields import FlagValue
 from scapy.utils import PcapReader
 from scapy.layers.dot11 import (
     Dot11, Dot11Beacon, Dot11Auth, Dot11Elt, Dot11ProbeReq, Dot11AssoReq,
-    Dot11ProbeResp, RadioTap, Dot11Deauth
+    Dot11ProbeResp, RadioTap, Dot11Deauth, Dot11AssoResp, Dot11ReassoReq, Dot11ReassoResp, Dot11Disas
 )
 
 from config.config import DEFAULT_OUI_PATH
@@ -132,7 +132,7 @@ def get_manufacturer(mac, oui_mapping):
 
 
 def parse_packet(packet, device_dict, oui_mapping, db_conn):
-    """Parse a packet and extract information about access points and clients."""
+    """Parse a packet and extract information about access points and clients, including frame counts."""
     try:
         packet_length = len(packet) if packet else 0
         frame_type = None
@@ -143,64 +143,46 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
         if not mac:
             return  # Skip if MAC is missing
 
-        # **1. Check if MAC is already classified as a client**
+        # **Check if MAC exists in access_points (AP list)**
+        cursor.execute("SELECT mac FROM access_points WHERE mac = ?", (mac,))
+        ap_entry = cursor.fetchone()
+
+        # **Check if MAC exists in clients (Client list)**
         cursor.execute("SELECT mac FROM clients WHERE mac = ?", (mac,))
         client_entry = cursor.fetchone()
-        if client_entry:
-            logger.warning(f"Skipping AP insertion for {mac}, it is already classified as a client.")
-            return  # Don't process as an AP
 
-        # **2. Process APs**
+        if ap_entry and client_entry:
+            logger.error(f"Conflict: {mac} is classified as both AP and Client!")
+            return
+
+        # **Process APs**
         if packet.haslayer(Dot11Beacon) or packet.haslayer(Dot11ProbeResp):
-            logger.debug("Parsing AP frame (Beacon or Probe Response).")
             frame_type = "beacon" if packet.haslayer(Dot11Beacon) else "probe_resp"
 
             ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
             stats = packet[Dot11Beacon].network_stats() if packet.haslayer(Dot11Beacon) else {}
             channel = stats.get('channel', 0)
             crypto = stats.get('crypto', 'None')
-
-            # **Fix: Convert encryption set to string**
-            if isinstance(crypto, set):
-                crypto = ', '.join(crypto)
-
             manufacturer = get_manufacturer(mac, oui_mapping)
             extended_capabilities = "No Extended Capabilities"
 
-            # **Retrieve existing frame_counts from database**
-            cursor.execute("SELECT frame_counts FROM access_points WHERE mac = ?", (mac,))
-            result = cursor.fetchone()
-
-            # **Ensure frame_counts is always valid JSON**
-            if result:
-                try:
-                    frame_counts = json.loads(result[0]) if result[0] else {}
-                except json.JSONDecodeError:
-                    logger.warning(f"Invalid JSON format for frame_counts of {mac}, resetting to empty dictionary.")
-                    frame_counts = {}
-            else:
-                frame_counts = {}
-
-            # **Ensure frame_counts is a dictionary (fix set issue)**
-            if not isinstance(frame_counts, dict):
-                logger.warning(f"Unexpected type in frame_counts for {mac}, resetting to empty dictionary.")
-                frame_counts = {}
-
-            # **Update frame counts**
-            frame_counts[frame_type] = frame_counts.get(frame_type, 0) + 1
-            frame_counts_json = json.dumps(frame_counts)  # Ensure JSON format
-
-            # **Ensure AP exists in device_dict**
             if mac not in device_dict:
                 device_dict[mac] = {
                     'mac': mac, 'ssid': ssid, 'encryption': crypto,
                     'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'channel': channel,
                     'extended_capabilities': extended_capabilities, 'clients': [], 'total_data': packet_length,
-                    'frame_counts': frame_counts  # Use the retrieved frame counts
+                    'frame_counts': {}
                 }
 
-            # **Insert/Update AP in database**
+            # **Ensure AP has frame_counts stored**
+            cursor.execute("SELECT frame_counts FROM access_points WHERE mac = ?", (mac,))
+            existing_frame_counts = cursor.fetchone()
+            existing_frame_counts = json.loads(existing_frame_counts[0]) if existing_frame_counts and existing_frame_counts[0] else {}
+
+            existing_frame_counts[frame_type] = existing_frame_counts.get(frame_type, 0) + 1
+            frame_counts_json = json.dumps(existing_frame_counts)
+
             cursor.execute("""
                 INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data, frame_counts)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -215,71 +197,102 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
             db_conn.commit()
             logger.info(f"AP updated: {device_dict[mac]}")
 
-        # **3. Process Clients**
-        elif packet.haslayer(Dot11ProbeReq) or packet.haslayer(Dot11Auth) or packet.haslayer(Dot11AssoReq):
-            logger.debug("Parsing Client frame (Probe Request, Auth, Assoc Req).")
-            frame_type = "probe_req" if packet.haslayer(Dot11ProbeReq) else "auth" if packet.haslayer(
-                Dot11Auth) else "assoc_req"
+        # **Process Clients**
+        elif any(packet.haslayer(layer) for layer in [
+            Dot11ProbeReq, Dot11Auth, Dot11AssoReq, Dot11AssoResp,
+            Dot11ReassoReq, Dot11ReassoResp, Dot11Deauth, Dot11Disas
+        ]):
+            if packet.haslayer(Dot11ProbeReq):
+                frame_type = "probe_req"
+            elif packet.haslayer(Dot11Auth):
+                frame_type = "auth"
+            elif packet.haslayer(Dot11AssoReq):
+                frame_type = "assoc_req"
+            elif packet.haslayer(Dot11AssoResp):
+                frame_type = "assoc_resp"
+            elif packet.haslayer(Dot11ReassoReq):
+                frame_type = "reassoc_req"
+            elif packet.haslayer(Dot11ReassoResp):
+                frame_type = "reassoc_resp"
+            elif packet.haslayer(Dot11Deauth):
+                frame_type = "deauth"
+            elif packet.haslayer(Dot11Disas):
+                frame_type = "disas"
+
             associated_ap = getattr(packet[Dot11], 'addr1', '').lower()
-
-            # **Check if MAC exists in access_points (AP list)**
-            cursor.execute("SELECT mac FROM access_points WHERE mac = ?", (mac,))
-            ap_entry = cursor.fetchone()
-            if ap_entry:
-                logger.warning(f"Skipping client insertion for {mac}, it is already classified as an AP.")
-                return  # Don't process as a client
-
             ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
             manufacturer = get_manufacturer(mac, oui_mapping)
 
-            # **Insert into Clients Table**
             cursor.execute("""
-                INSERT OR IGNORE INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                mac, ssid if ssid else "Unknown", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), manufacturer, dbm_signal,
-                associated_ap if associated_ap else None, packet_length))
+                INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data, frame_counts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mac) DO UPDATE SET
+                ssid=excluded.ssid, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
+                signal_strength=excluded.signal_strength, associated_ap=excluded.associated_ap,
+                total_data=clients.total_data + excluded.total_data,
+                frame_counts=excluded.frame_counts
+            """, (mac, ssid if ssid else "Unknown", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), manufacturer, dbm_signal,
+                  associated_ap if associated_ap else None, packet_length, '{}'))
 
             db_conn.commit()
             logger.info(f"Client recorded in database: {mac}, Associated AP: {associated_ap if associated_ap else 'None'}")
+
+        # **Frame Count Updates for APs and Clients**
+        if frame_type:
+            target_table = "access_points" if ap_entry else "clients"
+
+            cursor.execute(f"SELECT frame_counts FROM {target_table} WHERE mac = ?", (mac,))
+            frame_counts = cursor.fetchone()
+            frame_counts = json.loads(frame_counts[0]) if frame_counts and frame_counts[0] else {}
+            frame_counts[frame_type] = frame_counts.get(frame_type, 0) + 1
+
+            cursor.execute(f"UPDATE {target_table} SET frame_counts = ? WHERE mac = ?",
+                           (json.dumps(frame_counts), mac))
+            db_conn.commit()
+
+            logger.debug(f"Updated frame_counts for {mac} in {target_table}: {frame_counts}")
 
     except Exception as e:
         logger.error(f"Error parsing packet: {e}")
 
 
+
 def store_results_in_db(device_dict, db_conn):
-    """Store parsed results into the database and retain frame_counts."""
+    """Store parsed results into the database and retain frame_counts for APs and Clients."""
     try:
         cursor = db_conn.cursor()
 
-        for ap_mac, ap_info in device_dict.items():
+        for mac, info in device_dict.items():
             try:
-                encryption = ",".join(ap_info['encryption']) if isinstance(ap_info['encryption'], set) else ap_info['encryption']
+                encryption = ",".join(info['encryption']) if isinstance(info['encryption'], set) else info['encryption']
 
-                # **Retrieve existing frame_counts before updating**
-                cursor.execute("SELECT frame_counts FROM access_points WHERE mac = ?", (ap_mac,))
-                result = cursor.fetchone()
+                # **Retrieve existing frame_counts before updating (For APs & Clients)**
+                cursor.execute("SELECT frame_counts FROM access_points WHERE mac = ?", (mac,))
+                ap_result = cursor.fetchone()
+                cursor.execute("SELECT frame_counts FROM clients WHERE mac = ?", (mac,))
+                client_result = cursor.fetchone()
 
-                if result:
-                    try:
-                        existing_frame_counts = json.loads(result[0]) if result[0] else {}
-                    except json.JSONDecodeError:
-                        logger.warning(f"Invalid JSON format for frame_counts of {ap_mac}, resetting to empty dictionary.")
-                        existing_frame_counts = {}
-                else:
-                    existing_frame_counts = {}
+                # **Load frame counts from DB (or reset to empty dict if missing)**
+                existing_ap_frame_counts = json.loads(ap_result[0]) if ap_result and ap_result[0] else {}
+                existing_client_frame_counts = json.loads(client_result[0]) if client_result and client_result[0] else {}
 
-                # **Ensure frame_counts is a dictionary**
-                if not isinstance(existing_frame_counts, dict):
-                    logger.warning(f"Unexpected type in frame_counts for {ap_mac}, resetting to empty dictionary.")
-                    existing_frame_counts = {}
+                # **Ensure valid dictionary format**
+                if not isinstance(existing_ap_frame_counts, dict):
+                    existing_ap_frame_counts = {}
+                if not isinstance(existing_client_frame_counts, dict):
+                    existing_client_frame_counts = {}
 
-                # **Merge new frame counts from device_dict**
-                new_frame_counts = ap_info.get("frame_counts", {})
+                # **Merge new frame counts**
+                new_frame_counts = info.get("frame_counts", {})
                 for frame_type, count in new_frame_counts.items():
-                    existing_frame_counts[frame_type] = existing_frame_counts.get(frame_type, 0) + count
+                    if info.get("clients"):  # If it's a client, update client frame counts
+                        existing_client_frame_counts[frame_type] = existing_client_frame_counts.get(frame_type, 0) + count
+                    else:  # Otherwise, update AP frame counts
+                        existing_ap_frame_counts[frame_type] = existing_ap_frame_counts.get(frame_type, 0) + count
 
-                frame_counts_json = json.dumps(existing_frame_counts)
+                # **Convert frame_counts back to JSON**
+                ap_frame_counts_json = json.dumps(existing_ap_frame_counts)
+                client_frame_counts_json = json.dumps(existing_client_frame_counts)
 
                 # **Insert or update AP, preserving frame_counts**
                 cursor.execute("""
@@ -290,19 +303,25 @@ def store_results_in_db(device_dict, db_conn):
                 signal_strength=excluded.signal_strength, channel=excluded.channel, extended_capabilities=excluded.extended_capabilities,
                 total_data=access_points.total_data + excluded.total_data,
                 frame_counts=excluded.frame_counts
-                """, (ap_info['mac'], ap_info['ssid'], encryption, ap_info['last_seen'], ap_info['manufacturer'],
-                      ap_info['signal_strength'], ap_info['channel'], ap_info['extended_capabilities'], ap_info.get('total_data', 0), frame_counts_json))
+                """, (info['mac'], info['ssid'], encryption, info['last_seen'], info['manufacturer'],
+                      info['signal_strength'], info['channel'], info['extended_capabilities'], info.get('total_data', 0), ap_frame_counts_json))
 
-                # **Insert clients into the database**
-                for client in ap_info.get('clients', []):
+                # **Insert clients into the database, preserving frame_counts**
+                for client in info.get('clients', []):
                     cursor.execute("""
-                    INSERT OR REPLACE INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (client['mac'], client['ssid'], client['last_seen'], client['manufacturer'], client['signal_strength'], ap_info['mac'], client.get('total_data', 0)))
+                    INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data, frame_counts)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(mac) DO UPDATE SET
+                    ssid=excluded.ssid, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
+                    signal_strength=excluded.signal_strength, associated_ap=excluded.associated_ap,
+                    total_data=clients.total_data + excluded.total_data,
+                    frame_counts=excluded.frame_counts
+                    """, (client['mac'], client['ssid'], client['last_seen'], client['manufacturer'], client['signal_strength'], info['mac'], client.get('total_data', 0), client_frame_counts_json))
+
                     logger.info(f"Inserted client into database: {client}")
 
             except Exception as e:
-                logger.error(f"Error inserting AP {ap_info['mac']} into database: {e}")
+                logger.error(f"Error inserting {mac} into database: {e}")
 
         db_conn.commit()
 

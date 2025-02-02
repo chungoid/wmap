@@ -58,6 +58,7 @@ def initialize_db(db_conn):
             signal_strength INTEGER,
             associated_ap TEXT,
             total_data INTEGER DEFAULT 0,
+            frame_counts TEXT DEFAULT '{}',  -- NEW: Stores frame counts as JSON
             FOREIGN KEY (associated_ap) REFERENCES access_points(mac)
         )
         """)
