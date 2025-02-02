@@ -376,7 +376,7 @@ def live_scan(interface, db_conn, capture_file, process):
         # **Wait for capture file to be created**
         while not os.path.exists(capture_file):
             logger.info(f"Waiting for capture file: {capture_file}")
-            time.sleep(3)
+            time.sleep(8)
 
         logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 
@@ -388,15 +388,24 @@ def live_scan(interface, db_conn, capture_file, process):
 
                 except Scapy_Exception as e:
                     logger.warning(f"Skipped corrupted packet: {e}")
-                    continue  # **Skip invalid packets instead of stopping**
+                    continue  # **Skip corrupted packets**
 
                 except ValueError as e:
                     logger.warning(f"Malformed packet skipped: {e}")
-                    continue
+                    continue  # **Skip malformed packets**
+
+                except OSError as e:
+                    # **Handle "Invalid Block Body Length" error without stopping**
+                    if "Invalid Block body length" in str(e):
+                        logger.warning(f"Skipped invalid block: {e}")
+                        continue
+                    else:
+                        logger.error(f"Unexpected OS error during live scanning: {e}")
+                        break  # **Exit only if it's another critical OSError**
 
                 except Exception as e:
                     logger.error(f"Unexpected parsing error: {e}")
-                    continue
+                    continue  # **Skip other unknown errors instead of stopping**
 
                 # **Check if hcxdumptool is still running**
                 if process.poll() is not None:
