@@ -376,7 +376,7 @@ def live_scan(interface, db_conn, capture_file, process):
         # **Wait for capture file to be created**
         while not os.path.exists(capture_file):
             logger.info(f"Waiting for capture file: {capture_file}")
-            time.sleep(8)
+            time.sleep(3)
 
         logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 
@@ -384,6 +384,7 @@ def live_scan(interface, db_conn, capture_file, process):
         with PcapReader(capture_file) as pcap_reader:
             for packet in pcap_reader:
                 try:
+                    # **Try parsing the packet normally**
                     parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
 
                 except Scapy_Exception as e:
@@ -395,10 +396,17 @@ def live_scan(interface, db_conn, capture_file, process):
                     continue  # **Skip malformed packets**
 
                 except OSError as e:
-                    # **Handle "Invalid Block Body Length" error without stopping**
                     if "Invalid Block body length" in str(e):
-                        logger.warning(f"Skipped invalid block: {e}")
-                        continue
+                        logger.warning(f"Handling invalid block: {e}. Attempting partial recovery.")
+
+                        # **Attempt Partial Recovery Instead of Skipping**
+                        try:
+                            partial_data = bytes(packet)[:64]  # **Extract the first 64 bytes safely**
+                            logger.debug(f"Partial packet data extracted: {partial_data.hex()}")
+                        except Exception as recovery_error:
+                            logger.error(f"Partial recovery failed: {recovery_error}")
+                            continue  # **Skip only if partial recovery fails**
+
                     else:
                         logger.error(f"Unexpected OS error during live scanning: {e}")
                         break  # **Exit only if it's another critical OSError**
