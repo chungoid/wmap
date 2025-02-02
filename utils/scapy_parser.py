@@ -322,7 +322,6 @@ def live_scan(interface, db_conn):
     process = subprocess.Popen(command, shell=True, preexec_fn=os.setsid)
 
     try:
-        # **Ensure the capture file is created before proceeding**
         max_wait_time = 5  # Wait up to 5 seconds
         wait_time = 0
         while not os.path.exists(capture_file):
@@ -340,13 +339,10 @@ def live_scan(interface, db_conn):
         with PcapNgReader(capture_file) as pcap_reader:
             for packet in pcap_reader:
                 try:
-                    # **Parse the packet**
                     parse_packet(packet, device_dict, oui_mapping, db_conn)
 
-                    # **Immediately store results in the database**
                     store_results_in_db(device_dict, db_conn)
 
-                    # **Commit changes to ensure data is saved**
                     db_conn.commit()
                     logger.debug(f"Committed packet data to database (MACs: {list(device_dict.keys())})")
 
