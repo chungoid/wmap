@@ -368,62 +368,43 @@ def process_pcap(pcap_file, db_conn):
         logger.error(f"Error processing PCAP file: {e}")
 
 
-def live_scan(interface, db_conn, capture_file, process):
-    """Live scan parsing with real-time packet processing and enhanced error handling."""
+def live_scan(capture_file, db_conn, process):
+    """Live scan parsing that continuously reads from the capture file."""
     logger.info(f"Starting live parsing on: {capture_file}")
 
     try:
-        # **Ensure capture file exists before proceeding**
+        # Wait until the capture file is created
         while not os.path.exists(capture_file):
             logger.info(f"Waiting for capture file: {capture_file}")
             time.sleep(3)
 
         logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
 
-        # **Open the capture file for live reading**
-        with PcapReader(capture_file) as pcap_reader:
-            for packet in pcap_reader:
-                try:
-                    # **Attempt to parse each packet**
-                    parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
-
-                except OSError as e:
-                    if "Invalid Block body length" in str(e):
-                        logger.warning(f"Handling invalid block: {e}. Attempting to recover.")
-
-                        # **Attempt to skip only the problematic packet**
-                        continue  # Skip the packet instead of stopping
-
-                    else:
-                        logger.error(f"Unexpected OS error: {e}")
-                        continue  # Ensure the loop continues
-
-                except Scapy_Exception as e:
-                    logger.warning(f"Skipped corrupted packet: {e}")
-                    continue  # Skip corrupted packets
-
-                except ValueError as e:
-                    logger.warning(f"Malformed packet skipped: {e}")
-                    continue  # Skip malformed packets
-
-                except Exception as e:
-                    logger.error(f"Unexpected parsing error: {e}")
-                    continue  # Skip unknown errors instead of stopping
-
-                # **Check if hcxdumptool is still running**
-                if process.poll() is not None:
-                    logger.warning("hcxdumptool stopped unexpectedly. Restarting...")
-                    process = subprocess.Popen(
-                        f"hcxdumptool -i {interface} -o {capture_file}",
-                        shell=True, preexec_fn=os.setsid
-                    )
+        while process.poll() is None:  # **Ensure hcxdumptool is still running**
+            try:
+                with PcapReader(capture_file) as pcap_reader:
+                    for packet in pcap_reader:
+                        try:
+                            parse_packet(packet, device_dict={}, oui_mapping=parse_oui_file(), db_conn=db_conn)
+                        except Scapy_Exception as e:
+                            logger.warning(f"Skipped corrupted packet: {e}")
+                            continue
+                        except ValueError as e:
+                            logger.warning(f"Malformed packet skipped: {e}")
+                            continue
+                        except Exception as e:
+                            logger.error(f"Unexpected parsing error: {e}")
+                            continue
+                time.sleep(1)  # **Wait before re-opening the file for new packets**
+            except FileNotFoundError:
+                logger.warning(f"Capture file {capture_file} not found. Waiting...")
+                time.sleep(2)
+            except Exception as e:
+                logger.error(f"Unexpected error during live scanning: {e}")
 
     except KeyboardInterrupt:
         logger.info("Stopping live scan. Terminating hcxdumptool...")
-        os.killpg(os.getpgid(process.pid), signal.SIGTERM)  # **Terminate hcxdumptool properly**
-
-    except Exception as e:
-        logger.error(f"Unexpected error during live scanning: {e}")
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
 
     finally:
         logger.info("Closing database connection after live scanning.")
