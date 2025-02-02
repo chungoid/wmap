@@ -1,9 +1,7 @@
 import logging
 import os
 import signal
-import sqlite3
 import json
-import subprocess
 import time
 
 from datetime import datetime
@@ -161,8 +159,36 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
             stats = packet[Dot11Beacon].network_stats() if packet.haslayer(Dot11Beacon) else {}
             channel = stats.get('channel', 0)
             crypto = stats.get('crypto', 'None')
+
+            # **Fix: Convert encryption set to string**
+            if isinstance(crypto, set):
+                crypto = ', '.join(crypto)
+
             manufacturer = get_manufacturer(mac, oui_mapping)
             extended_capabilities = "No Extended Capabilities"
+
+            # **Retrieve existing frame_counts from database**
+            cursor.execute("SELECT frame_counts FROM access_points WHERE mac = ?", (mac,))
+            result = cursor.fetchone()
+
+            # **Ensure frame_counts is always valid JSON**
+            if result:
+                try:
+                    frame_counts = json.loads(result[0]) if result[0] else {}
+                except json.JSONDecodeError:
+                    logger.warning(f"Invalid JSON format for frame_counts of {mac}, resetting to empty dictionary.")
+                    frame_counts = {}
+            else:
+                frame_counts = {}
+
+            # **Ensure frame_counts is a dictionary (fix set issue)**
+            if not isinstance(frame_counts, dict):
+                logger.warning(f"Unexpected type in frame_counts for {mac}, resetting to empty dictionary.")
+                frame_counts = {}
+
+            # **Update frame counts**
+            frame_counts[frame_type] = frame_counts.get(frame_type, 0) + 1
+            frame_counts_json = json.dumps(frame_counts)  # Ensure JSON format
 
             # **Ensure AP exists in device_dict**
             if mac not in device_dict:
@@ -171,19 +197,20 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                     'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'channel': channel,
                     'extended_capabilities': extended_capabilities, 'clients': [], 'total_data': packet_length,
-                    'frame_counts': {}  # Ensure frame_counts exists
+                    'frame_counts': frame_counts  # Use the retrieved frame counts
                 }
 
-            # **Update AP in database**
+            # **Insert/Update AP in database**
             cursor.execute("""
                 INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data, frame_counts)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mac) DO UPDATE SET
                 ssid=excluded.ssid, encryption=excluded.encryption, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
                 signal_strength=excluded.signal_strength, channel=excluded.channel, extended_capabilities=excluded.extended_capabilities,
-                total_data=access_points.total_data + excluded.total_data
+                total_data=access_points.total_data + excluded.total_data,
+                frame_counts=excluded.frame_counts
             """, (mac, ssid, crypto, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), manufacturer, dbm_signal, channel,
-                  extended_capabilities, packet_length, '{}'))
+                  extended_capabilities, packet_length, frame_counts_json))
 
             db_conn.commit()
             logger.info(f"AP updated: {device_dict[mac]}")
@@ -210,36 +237,18 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
                 INSERT OR IGNORE INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
-            mac, ssid if ssid else "Unknown", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), manufacturer, dbm_signal,
-            associated_ap if associated_ap else None, packet_length))
+                mac, ssid if ssid else "Unknown", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), manufacturer, dbm_signal,
+                associated_ap if associated_ap else None, packet_length))
 
             db_conn.commit()
-            logger.info(
-                f"Client recorded in database: {mac}, Associated AP: {associated_ap if associated_ap else 'None'}")
-
-        # **4. Frame Counts Update**
-        if frame_type:
-            cursor.execute("SELECT frame_counts FROM access_points WHERE mac = ?", (mac,))
-            frame_counts = cursor.fetchone()
-
-            if frame_counts:
-                frame_counts = json.loads(frame_counts[0]) if frame_counts[0] else {}
-                frame_counts[frame_type] = frame_counts.get(frame_type, 0) + 1
-
-                cursor.execute("UPDATE access_points SET frame_counts = ? WHERE mac = ?",
-                               (json.dumps(frame_counts), mac))
-                db_conn.commit()
-
-            logger.debug(f"Updated frame_counts for {mac}: {frame_counts}")
+            logger.info(f"Client recorded in database: {mac}, Associated AP: {associated_ap if associated_ap else 'None'}")
 
     except Exception as e:
         logger.error(f"Error parsing packet: {e}")
 
 
 def update_frame_count(mac, frame_type, db_conn):
-    """
-    Update frame type counts inside the `access_points` table as JSON.
-    """
+    """Update frame type counts inside the `access_points` table as JSON."""
     try:
         cursor = db_conn.cursor()
 
@@ -251,18 +260,29 @@ def update_frame_count(mac, frame_type, db_conn):
             logger.warning(f"MAC {mac} not found in access_points. Skipping frame count update.")
             return
 
-        # Convert from JSON or initialize empty dict
-        frame_counts = json.loads(result[0]) if result[0] else {}
+        # **Fix: Ensure frame_counts is retrieved as a JSON dictionary**
+        try:
+            frame_counts = json.loads(result[0]) if result[0] else {}
+        except json.JSONDecodeError:
+            logger.warning(f"Invalid JSON format for frame_counts of {mac}, resetting to empty dictionary.")
+            frame_counts = {}
+
+        # **Ensure `frame_counts` is a dictionary (Fix potential set issues)**
+        if not isinstance(frame_counts, dict):
+            logger.warning(f"Unexpected type in frame_counts for {mac}, resetting to empty dictionary.")
+            frame_counts = {}
 
         # Increment frame count
         frame_counts[frame_type] = frame_counts.get(frame_type, 0) + 1
 
-        # Update database
+        # **Ensure `frame_counts` is stored as a JSON string**
+        frame_counts_json = json.dumps(frame_counts)
+
         cursor.execute("UPDATE access_points SET frame_counts = ? WHERE mac = ?",
-                       (json.dumps(frame_counts), mac))
+                       (frame_counts_json, mac))
         db_conn.commit()
 
-        logger.debug(f"Updated frame_counts for {mac}: {frame_counts}")
+        logger.debug(f"Updated frame_counts for {mac}: {frame_counts_json}")
 
     except Exception as e:
         logger.error(f"Error updating frame count for {mac}: {e}")
@@ -299,22 +319,52 @@ def update_total_data(mac, packet_length, db_conn):
 
 
 def store_results_in_db(device_dict, db_conn):
-    """Store parsed results into the database."""
+    """Store parsed results into the database and retain frame_counts."""
     try:
         cursor = db_conn.cursor()
+
         for ap_mac, ap_info in device_dict.items():
             try:
                 encryption = ",".join(ap_info['encryption']) if isinstance(ap_info['encryption'], set) else ap_info['encryption']
-                if not ap_info['ssid'] and not ap_info['encryption']:
-                    logger.warning(f"AP with MAC {ap_mac} has missing details: SSID={ap_info['ssid']}, Encryption={ap_info['encryption']}")
-                    continue
 
+                # **Retrieve existing frame_counts before updating**
+                cursor.execute("SELECT frame_counts FROM access_points WHERE mac = ?", (ap_mac,))
+                result = cursor.fetchone()
+
+                if result:
+                    try:
+                        existing_frame_counts = json.loads(result[0]) if result[0] else {}
+                    except json.JSONDecodeError:
+                        logger.warning(f"Invalid JSON format for frame_counts of {ap_mac}, resetting to empty dictionary.")
+                        existing_frame_counts = {}
+                else:
+                    existing_frame_counts = {}
+
+                # **Ensure frame_counts is a dictionary**
+                if not isinstance(existing_frame_counts, dict):
+                    logger.warning(f"Unexpected type in frame_counts for {ap_mac}, resetting to empty dictionary.")
+                    existing_frame_counts = {}
+
+                # **Merge new frame counts from device_dict**
+                new_frame_counts = ap_info.get("frame_counts", {})
+                for frame_type, count in new_frame_counts.items():
+                    existing_frame_counts[frame_type] = existing_frame_counts.get(frame_type, 0) + count
+
+                frame_counts_json = json.dumps(existing_frame_counts)
+
+                # **Insert or update AP, preserving frame_counts**
                 cursor.execute("""
-                INSERT OR REPLACE INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data, frame_counts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mac) DO UPDATE SET
+                ssid=excluded.ssid, encryption=excluded.encryption, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
+                signal_strength=excluded.signal_strength, channel=excluded.channel, extended_capabilities=excluded.extended_capabilities,
+                total_data=access_points.total_data + excluded.total_data,
+                frame_counts=excluded.frame_counts
                 """, (ap_info['mac'], ap_info['ssid'], encryption, ap_info['last_seen'], ap_info['manufacturer'],
-                      ap_info['signal_strength'], ap_info['channel'], ap_info['extended_capabilities'], ap_info.get('total_data', 0)))
+                      ap_info['signal_strength'], ap_info['channel'], ap_info['extended_capabilities'], ap_info.get('total_data', 0), frame_counts_json))
 
+                # **Insert clients into the database**
                 for client in ap_info.get('clients', []):
                     cursor.execute("""
                     INSERT OR REPLACE INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data)
@@ -326,6 +376,7 @@ def store_results_in_db(device_dict, db_conn):
                 logger.error(f"Error inserting AP {ap_info['mac']} into database: {e}")
 
         db_conn.commit()
+
     except Exception as e:
         logger.error(f"Error storing results in the database: {e}")
 
