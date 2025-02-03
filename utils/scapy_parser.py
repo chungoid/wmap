@@ -34,15 +34,15 @@ def decode_extended_capabilities(data):
         capabilities_bytes = bytes.fromhex(data)
         features = []
 
-        # **1. Management Frame Protection (MFP) - Byte 1, Bit 2**
+        # ** Management Frame Protection (MFP) - Byte 1, Bit 2**
         if len(capabilities_bytes) > 1 and not (capabilities_bytes[1] & (1 << 2)):
             features.append("No Management Frame Protection")
 
-        # **2. BSS Transition (802.11v) - Byte 0, Bit 6**
+        # ** BSS Transition (802.11v) - Byte 0, Bit 6**
         if len(capabilities_bytes) > 0 and (capabilities_bytes[0] & (1 << 6)):
             features.append("BSS Transition Enabled")
 
-        # **3. TDLS Support - Byte 3, Bits 0-2**
+        # ** TDLS Support - Byte 3, Bits 0-2**
         if len(capabilities_bytes) > 3:
             if capabilities_bytes[3] & (1 << 0):
                 features.append("TDLS Supported")
@@ -51,25 +51,22 @@ def decode_extended_capabilities(data):
             if capabilities_bytes[3] & (1 << 2):
                 features.append("TDLS Channel Switching Allowed")
 
-        # **4. Opportunistic Key Caching (OKC) - Byte 4, Bit 0**
+        # ** Opportunistic Key Caching (OKC) - Byte 4, Bit 0**
         if len(capabilities_bytes) > 4 and (capabilities_bytes[4] & (1 << 0)):
             features.append("Opportunistic Key Caching Enabled")
 
-        # **5. Extended Channel Switching - Byte 0, Bit 0**
+        # ** Extended Channel Switching - Byte 0, Bit 0**
         if len(capabilities_bytes) > 0 and (capabilities_bytes[0] & (1 << 0)):
             features.append("Extended Channel Switching Enabled")
 
-        # **6. Wi-Fi Protected Setup (WPS) Detection**
+        # ** Wi-Fi Protected Setup (WPS) Detection**
         if "WPS" in data:
             features.append("WPS Enabled")
 
-        # **Ensure Proper Formatting & Fix "No Extended Capabilities" Issues**
         if not features:
             return "No Extended Capabilities"
 
         formatted_features = ", ".join(features)
-
-        # **Debugging Output**
         logger.debug(f"Parsed Extended Capabilities: {formatted_features}")
 
         return formatted_features
@@ -342,7 +339,7 @@ def process_pcap(pcap_file, db_conn):
                     continue  # **Skip invalid packets instead of stopping**
 
         logger.debug(f"Device dictionary after processing: {device_dict}")
-        store_results_in_db(device_dict, db_conn)  # Use db_conn instead of db_path
+        store_results_in_db(device_dict, db_conn)
         logger.info("PCAP processing complete.")
 
     except FileNotFoundError:
