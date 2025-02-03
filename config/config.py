@@ -20,6 +20,7 @@ CONFIG = {
 # Default Paths
 DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.db")
 DEFAULT_OUI_PATH = os.path.abspath(os.path.join(CONFIG["config_dir"], "oui_lowercase.txt"))
+DEFAULT_QUERIES_PATH = os.path.abspath(os.path.join(CONFIG["config_dir"], "queries.yaml"))
 
 # Web Server Settings
 WEB_SERVER = {

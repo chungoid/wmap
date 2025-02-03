@@ -59,7 +59,20 @@ def decode_extended_capabilities(data):
         if len(capabilities_bytes) > 0 and (capabilities_bytes[0] & (1 << 0)):
             features.append("Extended Channel Switching Enabled")
 
-        return ", ".join(features) if features else "No Security Risks Detected"
+        # **6. Wi-Fi Protected Setup (WPS) Detection**
+        if "WPS" in data:
+            features.append("WPS Enabled")
+
+        # **Ensure Proper Formatting & Fix "No Extended Capabilities" Issues**
+        if not features:
+            return "No Extended Capabilities"
+
+        formatted_features = ", ".join(features)
+
+        # **Debugging Output**
+        logger.debug(f"Parsed Extended Capabilities: {formatted_features}")
+
+        return formatted_features
 
     except Exception as e:
         logger.error(f"Failed to decode extended capabilities: {data} - {e}")
@@ -105,7 +118,7 @@ def get_manufacturer(mac, oui_mapping):
 
 
 def parse_packet(packet, device_dict, oui_mapping, db_conn):
-    """Parse a packet and extract information about access points and clients."""
+    """Parse a packet and extract information about access points and clients, ensuring proper WPS detection."""
     try:
         if not packet.haslayer(Dot11):
             return  # Skip non-802.11 packets
@@ -141,37 +154,72 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
         elif packet.haslayer(Dot11Deauth):
             frame_type = "deauth"
 
-        # **1. Check if MAC is already classified as a client**
+        # **Check if MAC is already classified as a client**
         cursor.execute("SELECT mac FROM clients WHERE mac = ?", (mac,))
         client_entry = cursor.fetchone()
         if client_entry:
             logger.warning(f"Skipping AP insertion for {mac}, it is already classified as a client.")
             return
 
-        # **2. Process Access Points**
+        # **Process Access Points**
         if packet.haslayer(Dot11Beacon) or packet.haslayer(Dot11ProbeResp):
-            logger.debug("Processing AP frame (Beacon or Probe Response).")
+            logger.debug(f"Processing AP frame (Beacon or Probe Response) for {mac}.")
 
             ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
             stats = packet[Dot11Beacon].network_stats() if packet.haslayer(Dot11Beacon) else {}
             channel = stats.get('channel', 0)
             crypto = stats.get('crypto', 'None')
             manufacturer = get_manufacturer(mac, oui_mapping)
+
+            # **Detect WPS Before Parsing Extended Capabilities**
+            wps_info = None
             extended_capabilities = "No Extended Capabilities"  # Default
+
             if packet.haslayer(Dot11Elt):
                 elt = packet[Dot11Elt]
                 while isinstance(elt, Dot11Elt):
-                    if elt.ID == 127:  # Extended Capabilities Tag
+                    if elt.ID == 221:  # Vendor-Specific IE (0xDD) - Check for WPS
+                        vendor_data = elt.info
+                        if vendor_data[:3] == b'\x00\x50\xF2' and vendor_data[3] == 0x04:  # WPS OUI + Type 0x04
+                            try:
+                                logger.debug(f"Detected possible WPS block in {mac}: {vendor_data.hex()}")
+
+                                # **Extract WPS config methods**
+                                wps_config_methods = int.from_bytes(vendor_data[8:10], 'big') if len(vendor_data) > 9 else None
+
+                                # **Check if WPS meets Pixie Dust or Virtual Display criteria**
+                                config_methods = []
+                                if wps_config_methods:
+                                    logger.debug(f"WPS Config Methods for {mac}: {bin(wps_config_methods)}")
+
+                                    if wps_config_methods & 0x0100:
+                                        config_methods.append("PIN Mode (Pixie Dust Vulnerable)")
+                                    if wps_config_methods & 0x0800:
+                                        config_methods.append("Virtual Display")
+
+                                # **Only store WPS if it's vulnerable**
+                                if config_methods:
+                                    wps_info = ", ".join(config_methods)
+
+                            except Exception as e:
+                                logger.error(f"Failed to extract WPS details for {mac}: {e}")
+
+                    elif elt.ID == 127:  # Extended Capabilities Tag
                         try:
                             hex_data = elt.info.hex()
                             logger.debug(f"Raw Extended Capabilities Data for {mac}: {hex_data}")
-                            if len(hex_data) > 2:  # Ensure it's a valid short hex string
+                            if len(hex_data) > 2:
                                 extended_capabilities = decode_extended_capabilities(hex_data)
                         except Exception as e:
-                            logger.error(f"Failed to process extended capabilities: {e}")
+                            logger.error(f"Failed to process extended capabilities for {mac}: {e}")
                             extended_capabilities = "No Extended Capabilities"  # Fallback
-                        break
-                    elt = elt.payload  # Move to the next Information Element (IE)
+                    elt = elt.payload  # Move to next Information Element (IE)
+
+            # **Ensure Proper Formatting: Append WPS Details If Found**
+            if wps_info:
+                extended_capabilities = (
+                    f"{extended_capabilities}, {wps_info}" if extended_capabilities != "No Extended Capabilities" else wps_info
+                )
 
             # **Ensure AP exists in device_dict**
             if mac not in device_dict:
@@ -186,9 +234,9 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
             # **Update frame counts for AP**
             device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
 
-        # **3. Process Clients**
+        # **Process Clients**
         elif frame_type in ["probe_req", "auth", "assoc_req", "assoc_resp", "reassoc_req", "reassoc_resp", "disas", "deauth"]:
-            logger.debug("Processing Client frame.")
+            logger.debug(f"Processing Client frame for {mac}.")
 
             associated_ap = getattr(packet[Dot11], 'addr1', '').lower()
             ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
@@ -207,7 +255,6 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn):
 
     except Exception as e:
         logger.error(f"Error parsing packet: {e}")
-
 
 def store_results_in_db(device_dict, db_conn):
     """Store parsed results into the database and retain frame_counts."""

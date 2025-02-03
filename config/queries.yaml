@@ -2,99 +2,330 @@ queries:
   # 1. Detect APs Without Management Frame Protection (MFP) - Vulnerable to Deauth Attacks
   ap_no_mfp:
     description: "Find APs missing Management Frame Protection (MFP), which are vulnerable to deauthentication attacks."
-    sql: "SELECT mac, ssid, encryption, signal_strength, last_seen FROM access_points WHERE extended_capabilities NOT LIKE '%Management Frame Protection%' ORDER BY signal_strength DESC"
+    sql: |
+      SELECT mac, ssid, encryption, signal_strength, last_seen, extended_capabilities
+      FROM access_points
+      WHERE extended_capabilities LIKE '%No Management Frame Protection%'
+      ORDER BY signal_strength DESC;
 
   # 2. Detect APs Allowing Forced Roaming (BSS Transition)
   ap_bss_transition:
     description: "Find APs that allow BSS Transition, which can be exploited for Evil Twin attacks."
-    sql: "SELECT mac, ssid, encryption, signal_strength, last_seen FROM access_points WHERE extended_capabilities LIKE '%BSS Transition%' ORDER BY signal_strength DESC"
+    sql: |
+      SELECT mac, ssid, encryption, signal_strength, last_seen, extended_capabilities
+      FROM access_points
+      WHERE extended_capabilities LIKE '%BSS Transition%'
+      ORDER BY signal_strength DESC;
 
   # 3. Identify APs Allowing TDLS (Bypasses AP Security)
   ap_tdls:
     description: "Find APs that allow TDLS (Tunneled Direct Link Setup), which lets clients bypass AP security."
-    sql: "SELECT mac, ssid, encryption, signal_strength, last_seen FROM access_points WHERE extended_capabilities LIKE '%TDLS%' ORDER BY signal_strength DESC"
+    sql: |
+      SELECT mac, ssid, encryption, signal_strength, last_seen, extended_capabilities
+      FROM access_points
+      WHERE extended_capabilities LIKE '%TDLS%'
+      ORDER BY signal_strength DESC;
 
   # 4. Identify APs Using Opportunistic Key Caching (OKC) - Key Reuse Attack
   ap_opportunistic_key_caching:
     description: "Find APs using Opportunistic Key Caching, which can lead to session hijacking attacks."
-    sql: "SELECT mac, ssid, encryption, signal_strength, last_seen FROM access_points WHERE extended_capabilities LIKE '%Opportunistic Key Caching%' ORDER BY signal_strength DESC"
+    sql: |
+      SELECT mac, ssid, encryption, signal_strength, last_seen, extended_capabilities
+      FROM access_points
+      WHERE extended_capabilities LIKE '%Opportunistic Key Caching%'
+      ORDER BY signal_strength DESC;
 
-  # 5. Detect APs Allowing Forced Channel Switching (WiFi Jamming)
+  # 5. Detect APs Allowing Forced Channel Switching (Wi-Fi Jamming)
   ap_channel_switching:
     description: "Find APs that allow forced channel changes, which attackers can exploit for denial-of-service (DoS) attacks."
-    sql: "SELECT mac, ssid, encryption, signal_strength, last_seen FROM access_points WHERE extended_capabilities LIKE '%Extended Channel Switching%' ORDER BY signal_strength DESC"
+    sql: |
+      SELECT mac, ssid, encryption, signal_strength, last_seen, extended_capabilities
+      FROM access_points
+      WHERE extended_capabilities LIKE '%Extended Channel Switching%'
+      ORDER BY signal_strength DESC;
 
   # 6. Detect APs with Open or Weak Encryption
   ap_weak_encryption:
     description: "Find APs that use weak or open encryption (WEP or None)."
-    sql: "SELECT mac, ssid, encryption, signal_strength, last_seen FROM access_points WHERE encryption = 'None' OR encryption LIKE '%WEP%' ORDER BY signal_strength DESC"
+    sql: |
+      SELECT mac, ssid, encryption, signal_strength, last_seen
+      FROM access_points
+      WHERE encryption = 'None' OR encryption LIKE '%WEP%'
+      ORDER BY signal_strength DESC;
 
   # 7. Identify Clients Sending Unusual Authentication Requests
   client_high_auth_attempts:
     description: "Find clients sending excessive authentication attempts, possibly brute-forcing APs."
-    sql: "SELECT mac, associated_ap, last_seen, frame_counts FROM clients WHERE frame_counts LIKE '%auth%' ORDER BY CAST(json_extract(frame_counts, '$.auth') AS INTEGER) DESC"
+    sql: |
+      SELECT mac, associated_ap, last_seen, frame_counts
+      FROM clients
+      WHERE frame_counts LIKE '%auth%'
+      ORDER BY CAST(json_extract(frame_counts, '$.auth') AS INTEGER) DESC;
 
   # 8. Detect Clients Sending Excessive Deauthentication Frames (Deauth Attacks)
   client_deauth_attacks:
     description: "Identify clients sending a high number of deauthentication frames, possibly performing DoS attacks."
-    sql: "SELECT mac, associated_ap, last_seen, frame_counts FROM clients WHERE frame_counts LIKE '%deauth%' ORDER BY CAST(json_extract(frame_counts, '$.deauth') AS INTEGER) DESC"
+    sql: |
+      SELECT mac, associated_ap, last_seen, frame_counts
+      FROM clients
+      WHERE frame_counts LIKE '%deauth%'
+      ORDER BY CAST(json_extract(frame_counts, '$.deauth') AS INTEGER) DESC;
 
   # 9. Identify Clients That Changed Associated APs Multiple Times
   client_frequent_roaming:
     description: "Find clients rapidly switching between APs, which could indicate Evil Twin attacks."
-    sql: "SELECT mac, COUNT(DISTINCT associated_ap) AS ap_changes, last_seen FROM clients GROUP BY mac HAVING ap_changes > 3 ORDER BY ap_changes DESC"
+    sql: |
+      SELECT mac, COUNT(DISTINCT associated_ap) AS ap_changes, last_seen
+      FROM clients
+      GROUP BY mac
+      HAVING ap_changes > 3
+      ORDER BY ap_changes DESC;
 
   # 10. Detect Clients with No SSID (Hidden Probes)
   client_hidden_probe_requests:
     description: "Identify clients probing for hidden SSIDs, which attackers use for Evil Twin attacks."
-    sql: "SELECT mac, last_seen, associated_ap, total_data FROM clients WHERE ssid = '' ORDER BY last_seen DESC"
+    sql: |
+      SELECT mac, last_seen, associated_ap, total_data
+      FROM clients
+      WHERE ssid = ''
+      ORDER BY last_seen DESC;
 
   # 11. Find Clients Connected to Open Networks
   client_on_open_networks:
     description: "Find clients connected to APs with open encryption (no password protection)."
-    sql: "SELECT clients.mac, clients.associated_ap, access_points.ssid, access_points.encryption FROM clients JOIN access_points ON clients.associated_ap = access_points.mac WHERE access_points.encryption = 'None' ORDER BY clients.last_seen DESC"
+    sql: |
+      SELECT clients.mac, clients.associated_ap, access_points.ssid, access_points.encryption
+      FROM clients
+      JOIN access_points ON clients.associated_ap = access_points.mac
+      WHERE access_points.encryption = 'None'
+      ORDER BY clients.last_seen DESC;
 
   # 12. Identify Clients Associated with Rogue APs
   client_on_suspicious_aps:
     description: "Find clients connected to APs using weak encryption or known rogue SSIDs."
-    sql: "SELECT clients.mac, clients.associated_ap, access_points.ssid, access_points.encryption FROM clients JOIN access_points ON clients.associated_ap = access_points.mac WHERE access_points.ssid LIKE '%Free WiFi%' OR access_points.encryption IN ('None', 'WEP') ORDER BY clients.last_seen DESC"
+    sql: |
+      SELECT clients.mac, clients.associated_ap, access_points.ssid, access_points.encryption 
+      FROM clients 
+      JOIN access_points ON clients.associated_ap = access_points.mac 
+      WHERE access_points.ssid LIKE '%Free WiFi%' 
+      OR access_points.encryption IN ('None', 'WEP') 
+      ORDER BY clients.last_seen DESC;
 
   # 13. Detect APs with High Number of Clients
   ap_high_client_count:
     description: "Find APs with a large number of connected clients, which could indicate potential hotspots or compromised networks."
-    sql: "SELECT mac, ssid, encryption, COUNT(clients.mac) AS client_count FROM access_points LEFT JOIN clients ON access_points.mac = clients.associated_ap GROUP BY access_points.mac ORDER BY client_count DESC"
+    sql: | 
+      SELECT access_points.mac, access_points.ssid, COUNT(clients.mac) AS client_count
+      FROM access_points
+      LEFT JOIN clients ON access_points.mac = clients.associated_ap
+      GROUP BY access_points.mac
+      ORDER BY client_count DESC;
 
   # 14. Find APs with High Deauthentication Activity
   ap_high_deauth_activity:
     description: "Identify APs that have experienced a high number of deauthentication events."
-    sql: "SELECT mac, ssid, encryption, frame_counts FROM access_points WHERE frame_counts LIKE '%deauth%' ORDER BY CAST(json_extract(frame_counts, '$.deauth') AS INTEGER) DESC"
+    sql: |
+      SELECT mac, ssid, encryption, frame_counts
+      FROM access_points
+      WHERE frame_counts LIKE '%deauth%'
+      ORDER BY CAST(json_extract(frame_counts, '$.deauth') AS INTEGER) DESC;
 
   # 15. Find Recently Active Clients
   recent_clients:
     description: "List clients that have been active in the last hour."
-    sql: "SELECT mac, associated_ap, last_seen, signal_strength FROM clients WHERE last_seen >= datetime('now', '-1 hour') ORDER BY last_seen DESC"
+    sql: |
+      SELECT mac, associated_ap, last_seen, signal_strength
+      FROM clients
+      WHERE last_seen >= datetime('now', '-1 hour')
+      ORDER BY last_seen DESC;
 
   # 16. Find Recently Active Access Points
   recent_access_points:
     description: "List APs that have been active in the last hour."
-    sql: "SELECT mac, ssid, encryption, last_seen FROM access_points WHERE last_seen >= datetime('now', '-1 hour') ORDER BY last_seen DESC"
+    sql: |
+      SELECT mac, ssid, encryption, last_seen
+      FROM access_points
+      WHERE last_seen >= datetime('now', '-1 hour')
+      ORDER BY last_seen DESC;
 
   # 17. Find Clients That Have Roamed to Multiple Networks
   client_multiple_networks:
     description: "Identify clients that have connected to more than one SSID."
-    sql: "SELECT mac, COUNT(DISTINCT ssid) AS ssid_count FROM clients GROUP BY mac HAVING ssid_count > 1 ORDER BY ssid_count DESC"
+    sql: |
+      SELECT mac, COUNT(DISTINCT ssid) AS ssid_count
+      FROM clients
+      GROUP BY mac
+      HAVING ssid_count > 1
+      ORDER BY ssid_count DESC;
 
   # 18. Identify Rogue APs Using a Legitimate SSID
   rogue_ap_ssid_spoofing:
     description: "Find multiple APs broadcasting the same SSID with different BSSIDs (possible Evil Twin)."
-    sql: "SELECT ssid, COUNT(DISTINCT mac) AS ap_count FROM access_points GROUP BY ssid HAVING ap_count > 1 ORDER BY ap_count DESC"
+    sql: |
+      SELECT ssid, COUNT(DISTINCT mac) AS ap_count
+      FROM access_points
+      GROUP BY ssid
+      HAVING ap_count > 1
+      ORDER BY ap_count DESC;
 
   # 19. Find Clients Using Outdated Security Protocols (WEP/TKIP)
   client_weak_encryption:
     description: "Find clients connected to APs using weak encryption (WEP or WPA-TKIP)."
-    sql: "SELECT clients.mac, clients.associated_ap, access_points.ssid, access_points.encryption FROM clients JOIN access_points ON clients.associated_ap = access_points.mac WHERE access_points.encryption LIKE '%WEP%' OR access_points.encryption LIKE '%TKIP%' ORDER BY clients.last_seen DESC"
+    sql: |
+      SELECT clients.mac, clients.associated_ap, access_points.ssid, access_points.encryption
+      FROM clients
+      JOIN access_points ON clients.associated_ap = access_points.mac
+      WHERE access_points.encryption LIKE '%WEP%' 
+      OR access_points.encryption LIKE '%TKIP%'
+      ORDER BY clients.last_seen DESC;
 
   # 20. Detect Clients That Have Associated with Multiple SSIDs Over Time
   client_ssid_changes:
     description: "Find clients that have connected to multiple different SSIDs over time."
-    sql: "SELECT mac, COUNT(DISTINCT ssid) AS ssid_count FROM clients GROUP BY mac HAVING ssid_count > 1 ORDER BY ssid_count DESC"
+    sql: |
+      SELECT mac, COUNT(DISTINCT ssid) AS ssid_count
+      FROM clients
+      GROUP BY mac
+      HAVING ssid_count > 1
+      ORDER BY ssid_count DESC;
+
+  # 21. Identify devices with WPS enabled
+  ap_wps_enabled:
+    description: "Find APs with WPS enabled, which can be vulnerable to brute-force attacks."
+    sql: |
+      SELECT mac, ssid, encryption, signal_strength, last_seen, extended_capabilities
+      FROM access_points
+      WHERE extended_capabilities LIKE '%WPS Enabled%'
+      ORDER BY signal_strength DESC;
+
+  # 22. Identify Clients with Excessive Authentication Failures
+  client_auth_failures:
+    description: "Find clients that have failed authentication multiple times, potentially brute-forcing APs."
+    sql: |
+      SELECT mac, associated_ap, last_seen, frame_counts
+      FROM clients
+      WHERE frame_counts LIKE '%auth%' 
+      AND CAST(json_extract(frame_counts, '$.auth') AS INTEGER) > 10
+      ORDER BY last_seen DESC;
+
+  # 23. Detect Hidden APs (No SSID Broadcast)
+  hidden_access_points:
+    description: "Find APs that are not broadcasting their SSID, which could be malicious or part of a stealth network."
+    sql: |
+      SELECT mac, encryption, signal_strength, last_seen
+      FROM access_points
+      WHERE ssid = ''
+      ORDER BY signal_strength DESC;
+
+  # 24. Find APs with Default or Manufacturer SSIDs
+  default_ssid_access_points:
+    description: "Identify APs using default SSIDs, which could be misconfigured or insecure."
+    sql: |
+      SELECT mac, ssid, manufacturer, signal_strength, last_seen
+      FROM access_points
+      WHERE ssid LIKE 'NETGEAR%' OR ssid LIKE 'Linksys%' OR ssid LIKE 'D-Link%' 
+      OR ssid LIKE 'TP-Link%' OR ssid LIKE 'SpectrumSetup%'
+      ORDER BY last_seen DESC;
+
+  #25. Detect Clients with Unusual High Data Transfer
+  high_data_transfer_clients:
+    description: "Find clients that have sent or received an unusually high amount of data."
+    sql: |
+      SELECT mac, associated_ap, total_data, last_seen
+      FROM clients
+      WHERE total_data > 1000000 -- 1MB as a threshold, can be adjusted
+      ORDER BY total_data DESC;
+
+  #26. Detect Clients with Suspicious AP Associations
+  client_many_ap_associations:
+    description: "Find clients that have attempted to associate with multiple different APs."
+    sql: |
+      SELECT mac, COUNT(DISTINCT associated_ap) AS ap_attempts, last_seen
+      FROM clients
+      GROUP BY mac
+      HAVING ap_attempts > 5
+      ORDER BY ap_attempts DESC;
+
+  # 27. Identify Potential Rogue Clients
+  rogue_client_probe_requests:
+    description: "Identify clients probing for unusual or potentially rogue SSIDs."
+    sql: |
+      SELECT mac, ssid, last_seen, total_data
+      FROM clients
+      WHERE ssid LIKE '%hack%' OR ssid LIKE '%pentest%' OR ssid LIKE '%EvilAP%'
+      ORDER BY last_seen DESC;
+
+  # 28. Find Clients Sending Too Many Probe Requests
+  excessive_probe_requests:
+    description: "Find clients that are sending a high number of probe requests, possibly scanning for networks."
+    sql: |
+      SELECT mac, last_seen, frame_counts
+      FROM clients
+      WHERE frame_counts LIKE '%probe_req%'
+      ORDER BY CAST(json_extract(frame_counts, '$.probe_req') AS INTEGER) DESC;
+
+  # 29. List APs That Have Changed Channels Frequently
+  ap_channel_changes:
+    description: "Find APs that have switched channels multiple times, possibly avoiding detection."
+    sql: |
+      SELECT mac, COUNT(DISTINCT channel) AS channel_changes, last_seen
+      FROM access_points
+      GROUP BY mac
+      HAVING channel_changes > 3
+      ORDER BY channel_changes DESC;
+
+  # 30. Detect Clients That Recently Connected to a New Network
+  client_recent_network_change:
+    description: "Find clients that have recently connected to a new SSID."
+    sql: |
+      SELECT mac, associated_ap, last_seen
+      FROM clients
+      WHERE last_seen >= datetime('now', '-30 minutes')
+      ORDER BY last_seen DESC;
+
+  # 31. Identify Clients That Were Active But Are Now Missing
+  missing_clients:
+    description: "Find clients that were recently seen but are now missing."
+    sql: |
+      SELECT mac, associated_ap, last_seen
+      FROM clients
+      WHERE last_seen < datetime('now', '-1 hour')
+      ORDER BY last_seen ASC;
+
+  # 32. Retrieve All APs Broadcast by a Specific MAC Address
+  ap_history_by_mac:
+    description: "Find all SSIDs broadcast by a specific MAC address."
+    sql: |
+      SELECT mac, ssid, encryption, last_seen
+      FROM access_points
+      WHERE mac = :mac
+      ORDER BY last_seen DESC;
+
+  # 33. Retrieve All Clients That Have Connected to a Specific AP
+  clients_by_ap:
+    description: "Find all clients that have connected to a specific AP."
+    sql: |
+      SELECT mac, ssid, last_seen, total_data
+      FROM clients
+      WHERE associated_ap = :ap_mac
+      ORDER BY last_seen DESC;
+
+  # 34. Find the First and Last Seen Timestamp for a Client
+  client_first_last_seen:
+    description: "Get the first and last seen timestamps for a specific client."
+    sql: |
+      SELECT mac, MIN(last_seen) AS first_seen, MAX(last_seen) AS last_seen
+      FROM clients
+      WHERE mac = :mac;
+
+  # 35. Detect Large-Scale Deauthentication Attacks
+  mass_deauth_attack:
+    description: "Identify APs receiving an unusually high number of deauthentication frames."
+    sql: |
+      SELECT mac, ssid, frame_counts
+      FROM access_points
+      WHERE frame_counts LIKE '%deauth%'
+      ORDER BY CAST(json_extract(frame_counts, '$.deauth') AS INTEGER) DESC;
+  
+  
+      
