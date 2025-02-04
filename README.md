@@ -20,31 +20,34 @@ pip install -r requirements.txt
 ## Usage
 ```
 example:
-    sudo python3 wmap --set-key <your key>
-    sudo python3 wmap --active wlan0
-    sudo python3 wmap --upload 
-    sudo python3 wmap --download
+    sudo python3 wmap -sk <your key>
+    sudo python3 wmap -g -a wlan0 
+    sudo python3 wmap -u
+    sudo python3 wmap -d
 
-python wmap [-h] [--active] [--passive] [-u [UPLOAD]] [-d [DOWNLOAD]] [--set-key SET_KEY] [--get-key] [--no-webserver] [--parse-existing PARSE_EXISTING] [interface]
+usage: wmap [-h] [-a] [-p] [-g] [-e PCAPNG_FILE [NMEA_FILE ...]] [-u [UPLOAD]] [-d [DOWNLOAD]] [-sk SET_KEY] [-gk] [-nw] [interface]
 
 Wireless capturing, parsing, and analyzing.
 
 positional arguments:
-  interface             Name of the wireless interface (optional if parsing existing file)
+  interface             Name of the wireless interface (required for scanning)
 
 options:
   -h, --help            show this help message and exit
-  --active              Enable active scanning mode
-  --passive             Enable passive scanning mode
+  -a, --active          Enable active scanning mode
+  -p, --passive         Enable passive scanning mode
+  -g, --gpsd            Enable GPS logging with hcxdumptool
+  -e PCAPNG_FILE [NMEA_FILE ...], --existing PCAPNG_FILE [NMEA_FILE ...]
+                        Parse an existing PCAPNG file. Optionally provide an NMEA file for GPS data.
   -u [UPLOAD], --upload [UPLOAD]
-                        Upload a specific PCAP file or all unmarked files in the capture directory.
+                        Upload PCAPNG(s) to WPA-SEC
   -d [DOWNLOAD], --download [DOWNLOAD]
-                        Download potfile from WPA-SEC (default path if no path provided).
-  --set-key SET_KEY     Set the WPA-SEC key in the database.
-  --get-key             Get the WPA-SEC key from the database.
-  --no-webserver        Disable web server and run CLI-only operations.
-  --parse-existing PARSE_EXISTING
-                        Parse an existing capture file (e.g., /path/to/file.pcap).
+                        Download potfile from WPA-SEC
+  -sk SET_KEY, --set-key SET_KEY
+                        Set the WPA-SEC API key in the database.
+  -gk, --get-key        Retrieve the WPA-SEC API key from the database.
+  -nw, --no-webserver   Disable web server and run CLI-only operations.
+
 ```
 
 ## Customize Database Queries
