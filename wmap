@@ -5,7 +5,7 @@ import subprocess
 import logging
 
 from utils import scapy_parser, wpa_sec, setup_work, helpers
-from config.config import CONFIG, WEB_SERVER_PATH, setup_logging
+from config.config import CONFIG, setup_logging
 from utils.scapy_parser import process_nmea
 from utils.setup_work import get_db_connection
 from utils.helpers import generate_capture_filename, generate_nmea_filename, stop_webserver, start_webserver
@@ -129,13 +129,13 @@ def main():
             logger.debug(f"Capture file path set to: {capture_file}")
 
             if args.active:
-                hcxdumptool_cmd = f"hcxdumptool -i {args.interface} -w {capture_file}"
+                hcxdumptool_cmd = f"hcxdumptool -i {args.interface} -w {capture_file} -F"
                 logger.info(f"Starting active scan with command: {hcxdumptool_cmd}")
 
             elif args.passive:
                 hcxdumptool_cmd = (
                     f"hcxdumptool -i {args.interface} -w {capture_file} "
-                    f"--disable_deauthentication --disable_proberequest --disable_association --disable_reassociation"
+                    f"-F --disable_deauthentication --disable_proberequest --disable_association --disable_reassociation"
                 )
                 logger.info(f"Starting passive scan with command: {hcxdumptool_cmd}")
 
