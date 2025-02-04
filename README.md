@@ -19,7 +19,7 @@ pip install -r requirements.txt
 
 ## Usage
 ```
-usage: wmap [-h] [-a] [-p] [-g] [-e PCAPNG_FILE [NMEA_FILE ...]] [-u [UPLOAD]] [-d [DOWNLOAD]] [-sk SET_KEY] [-gk] [-nw] [interface]
+usage: wmap [-h] [-a] [-p] [-g] [-e PCAPNG_FILE [NMEA_FILE ...]] [-u [UPLOAD]] [-d [DOWNLOAD]] [-sk SET_KEY] [-gk] [-w] [-sw] [interface]
 
 Wireless capturing, parsing, and analyzing.
 
@@ -40,7 +40,9 @@ options:
   -sk SET_KEY, --set-key SET_KEY
                         Set the WPA-SEC API key in the database.
   -gk, --get-key        Retrieve the WPA-SEC API key from the database.
-  -nw, --no-webserver   Disable web server and run CLI-only operations.
+  -w, --webserver       Enable the web server.
+  -sw, --stop-webserver
+                        Stop the running web server.
 
 ```
 

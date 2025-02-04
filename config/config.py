@@ -20,11 +20,13 @@ CONFIG = {
 DEFAULT_DB_PATH = os.path.join(CONFIG["db_dir"], "wmap.db")
 DEFAULT_OUI_PATH = os.path.join(CONFIG["config_dir"], "oui_lowercase.txt")
 DEFAULT_QUERIES_PATH = os.path.join(CONFIG["config_dir"], "queries.yaml")
+WEB_SERVER_PATH = os.path.join(CONFIG["web_dir"], "app.py")
 
 
 # Centralized log paths for all modules
 LOG_FILES = {
     "wmap": os.path.join(CONFIG["log_dir"], "wmap.log"),
+    "web": os.path.join(CONFIG["log_dir"], "web.log"),
 #    "test": os.path.join(CONFIG["log_dir"], "test.log")
 }
 

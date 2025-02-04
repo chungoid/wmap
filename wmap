@@ -5,10 +5,10 @@ import subprocess
 import logging
 
 from utils import scapy_parser, wpa_sec, setup_work, helpers
-from config.config import CONFIG, setup_logging
+from config.config import CONFIG, WEB_SERVER_PATH, setup_logging
 from utils.scapy_parser import process_nmea
 from utils.setup_work import get_db_connection
-from utils.helpers import generate_capture_filename, generate_nmea_filename
+from utils.helpers import generate_capture_filename, generate_nmea_filename, stop_webserver, start_webserver
 
 
 def initialize():
@@ -16,6 +16,10 @@ def initialize():
     try:
         setup_logging()
         logger = logging.getLogger("wmap")
+
+        # **Set wmap logger to INFO mode**
+        logger.setLevel(logging.INFO)
+
         logger.info("Logger initialized.")
 
         # Ensure log directory ownership is fixed
@@ -32,9 +36,9 @@ def initialize():
         logger.info("Fixed directory ownerships.")
     except Exception as e:
         logger.error(f"Error ensuring directories or fixing ownership: {e}")
-        return
+        return logger  # Ensure logger is returned even if an error occurs
 
-    return logger
+    return logger  # Ensure logger is returned for use in `main()`
 
 
 def main():
@@ -67,11 +71,11 @@ def main():
     parser.add_argument("-sk", "--set-key", type=str, help="Set the WPA-SEC API key in the database.")
     parser.add_argument("-gk", "--get-key", action="store_true", help="Retrieve the WPA-SEC API key from the database.")
 
-    parser.add_argument("-nw", "--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
+    parser.add_argument("-w", "--webserver", action="store_true", help="Enable the web server.")
+    parser.add_argument("-sw", "--stop-webserver", action="store_true", help="Stop the running web server.")
 
     args = parser.parse_args()
     logger.debug(f"Parsed arguments: {args}")
-
 
     # Open a Single Database Connection
     with get_db_connection() as db_conn:
@@ -85,7 +89,7 @@ def main():
         # Handle parsing of an existing PCAPNG with NMEA file optionally
         if args.existing:
             pcapng_file = args.existing[0]
-            nmea_file = args.existing[1] if len(args.existing) > 1 else None  # (if exists)
+            nmea_file = args.existing[1] if len(args.existing) > 1 else None
 
             if not os.path.exists(pcapng_file):
                 logger.error(f"PCAPNG file not found: {pcapng_file}")
@@ -108,22 +112,17 @@ def main():
             scapy_parser.process_pcapng(pcapng_file, db_conn, gps_data=gps_data)
 
             logger.info("Parsing and storing complete.")
-            return
 
         # Start hcxdumptool scanning
         if args.active or args.passive:
-
-            # Ensure an interface is provided before scanning
             if not args.interface:
                 logger.error("An interface must be specified for active or passive scanning modes.")
                 parser.error("An interface must be specified for active or passive scanning modes.")
 
-            # Ensure --gpsd is only used with --active or --passive
             if args.gpsd and not (args.active or args.passive):
                 logger.error("--gpsd must be used with either --active or --passive.")
                 parser.error("--gpsd must be used with either --active or --passive.")
 
-            # Generate current time formatted filenames
             capture_file = generate_capture_filename()
             gps_file = generate_nmea_filename() if args.gpsd else None
 
@@ -140,27 +139,28 @@ def main():
                 )
                 logger.info(f"Starting passive scan with command: {hcxdumptool_cmd}")
 
-            # Append GPSD option if enabled
             if args.gpsd:
                 hcxdumptool_cmd += f" --gpsd --nmea_out={gps_file}"
                 logger.info(f"GPS logging enabled. hcxdumptool will generate {gps_file}.")
 
-            # Execute the command
             process = subprocess.Popen(hcxdumptool_cmd, shell=True, preexec_fn=os.setsid)
 
-            # Fix permissions on capture and NMEA files immediately after creation
             helpers.fix_permissions([capture_file])
             if gps_file:
                 helpers.fix_permissions([gps_file])
 
-            # Start Live Scanning & Parsing
             scapy_parser.live_scan(capture_file, db_conn, process, gps_file=gps_file)
 
-        # Start Web Server (if enabled)
-        if not args.no_webserver:
-            logger.info("Starting web server.")
+        if args.stop_webserver:
+            """Stop the web server and exit."""
+            if stop_webserver():
+                logger.info("Web server stopped successfully.")
+            else:
+                logger.warning("No running web server found.")
+            return  # Exit after stopping the server to prevent restart!
 
-        logger.info("wmap application finished.")
+        if args.webserver:
+            start_webserver()
 
 
 if __name__ == "__main__":

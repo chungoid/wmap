@@ -5,6 +5,8 @@ import subprocess
 import getpass
 import logging
 
+from config.config import CONFIG, WEB_SERVER, WEB_SERVER_PATH
+
 
 logger = logging.getLogger("wmap")
 
@@ -66,5 +68,52 @@ def fix_permissions(paths=None):
 
     except Exception as e:
         logger.warning(f"Could not fix permissions for {paths}: {e}")
+
+
+def stop_webserver():
+    """Find and stop any existing web server process using the configured port."""
+    web_port = WEB_SERVER["port"]  # Get the configured webserver port
+
+    try:
+        # Find processes using the port
+        result = subprocess.run(
+            ["lsof", "-t", "-i", f":{web_port}"], capture_output=True, text=True
+        )
+
+        if result.stdout.strip():
+            pids = result.stdout.strip().split("\n")
+            for pid in pids:
+                # Check if the PID belongs to a Python process (Flask web server)
+                process_info = subprocess.run(
+                    ["ps", "-o", "comm=", "-p", pid], capture_output=True, text=True
+                )
+                process_name = process_info.stdout.strip()
+
+                if "python" in process_name.lower():  # Only kill Python processes
+                    subprocess.run(["kill", "-9", pid])
+                    logger.info(f"Stopped existing web server (PID: {pid})")
+                else:
+                    logger.info(f"Skipping non-Python process (PID: {pid} - {process_name})")
+
+    except Exception as e:
+        logger.warning(f"Could not check for existing web server: {e}")
+
+
+def start_webserver():
+    """Start the web server, ensuring no previous instance is running."""
+    logger.info(f"Attempting to start web server: {WEB_SERVER_PATH}")
+
+    if os.path.exists(WEB_SERVER_PATH):
+        stop_webserver()  # Stop existing server before starting a new one
+        logger.info(f"Starting web server from {WEB_SERVER_PATH}...")
+
+        with open(os.path.join(CONFIG["log_dir"], "web.log"), "a") as log_file:
+            result = subprocess.Popen(["python3", WEB_SERVER_PATH], stdout=log_file, stderr=log_file)
+            logger.info(f"Web server started with PID: {result.pid}")
+
+    else:
+        logger.error(f"Web server file not found: {WEB_SERVER_PATH}")
+
+
 
 

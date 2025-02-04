@@ -3,33 +3,199 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WMAP Dashboard</title>
-    <script src="https://cdn.socket.io/4.5.1/socket.io.min.js"></script>
+    <title>Wmap Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script>
-        const socket = io();
+        document.addEventListener("DOMContentLoaded", function () {
+            const socket = io();
 
-        socket.on("connect", () => {
-            console.log("Connected to server");
-        });
+            socket.on("update_ap_client_data", function (data) {
+                console.log("Received AP & Client Data:", data);
+                updateAPTable(data);
+            });
 
-        socket.on("update", (data) => {
-            console.log("Live update received:", data);
-            // Update UI with new data here
+            function updateAPTable(data) {
+                let tableBody = document.getElementById("apTableBody");
+                tableBody.innerHTML = "";
+
+                let unassociatedClients = [];
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    console.warn("No AP & Client data received.");
+                    return;
+                }
+
+                data.forEach(ap => {
+                    let row = document.createElement("tr");
+                    row.innerHTML = `
+                        <td>${ap.mac}</td>
+                        <td>${ap.ssid || "Hidden SSID"}</td>
+                        <td>${ap.encryption || "Unknown"}</td>
+                        <td>${ap.signal_strength} dBm</td>
+                        <td>${ap.last_seen}</td>
+                        <td>${ap.channel}</td>
+                        <td>${ap.extended_capabilities || "None"}</td>
+                        <td>
+                            <button onclick="toggleClients('${ap.mac}')">
+                                ${ap.clients.length} Clients
+                            </button>
+                            <ul id="clients-${ap.mac}" class="client-list" style="display:none;">
+                                ${ap.clients.length > 0 ? ap.clients.map(client =>
+                                    `<li>${client.mac} - ${client.signal_strength} dBm (Last Seen: ${client.last_seen})</li>`).join("")
+                                    : "<li>No Clients</li>"}
+                            </ul>
+                        </td>
+                    `;
+                    tableBody.appendChild(row);
+
+                    ap.clients.forEach(client => {
+                        if (!client.associated_ap || client.associated_ap === "Unknown" || client.associated_ap === "ff:ff:ff:ff:ff:ff") {
+                            unassociatedClients.push(client);
+                        }
+                    });
+                });
+
+                if (unassociatedClients.length > 0) {
+                    let unassocRow = document.createElement("tr");
+                    unassocRow.innerHTML = `
+                        <td colspan="7"><strong>Unassociated Clients</strong></td>
+                        <td>
+                            <button onclick="toggleUnassociated()"> ${unassociatedClients.length} Clients</button>
+                            <ul id="unassociatedClientsList" class="client-list" style="display:none;">
+                                ${unassociatedClients.map(client =>
+                                    `<li>${client.mac} - ${client.signal_strength} dBm (Last Seen: ${client.last_seen})</li>`).join("")}
+                            </ul>
+                        </td>
+                    `;
+                    tableBody.appendChild(unassocRow);
+                }
+            }
+
+            function toggleClients(apMac) {
+                let clientList = document.getElementById(`clients-${apMac}`);
+                clientList.style.display = clientList.style.display === "none" ? "block" : "none";
+            }
+
+            function toggleUnassociated() {
+                let unassocList = document.getElementById("unassociatedClientsList");
+                unassocList.style.display = unassocList.style.display === "none" ? "block" : "none";
+            }
+
+            fetch("/available-queries")
+                .then(response => response.json())
+                .then(data => {
+                    let dropdown = document.getElementById("queryDropdown");
+                    dropdown.innerHTML = `<option value="" disabled selected>Select a Query</option>`;
+
+                    data.forEach(category => {
+                        let optGroup = document.createElement("optgroup");
+                        optGroup.label = category.category;
+
+                        category.queries.forEach(query => {
+                            let option = document.createElement("option");
+                            option.value = query.id;
+                            option.textContent = query.description;
+                            optGroup.appendChild(option);
+                        });
+
+                        dropdown.appendChild(optGroup);
+                    });
+                });
+
+            window.runQuery = function () {
+                let selectedQuery = document.getElementById("queryDropdown").value;
+                if (!selectedQuery) {
+                    alert("Please select a query first.");
+                    return;
+                }
+                fetch(`/run-query/${selectedQuery}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        let resultContainer = document.getElementById("queryResults");
+                        resultContainer.innerHTML = `<h3>Results:</h3><pre>${JSON.stringify(data.results, null, 2)}</pre>`;
+                    });
+            };
         });
     </script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 10px;
+            background-color: #f4f4f4;
+        }
+        h1, h2 {
+            text-align: center;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+        th, td {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background-color: #007BFF;
+            color: white;
+        }
+        button {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #218838;
+        }
+        .client-list {
+            padding-left: 15px;
+            list-style: none;
+        }
+        #queryResults {
+            background: white;
+            padding: 10px;
+            border: 1px solid #ddd;
+            white-space: pre-wrap;
+            overflow: auto;
+        }
+        .dropdown-container {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+    </style>
 </head>
 <body>
-    <h1>WMAP Dashboard</h1>
-    <p>Use the available queries to interact with the database:</p>
-    <ul id="query-list"></ul>
+    <h1>Wmap Dashboard</h1>
 
-    <script>
-        fetch("/query/1")
-            .then(response => response.json())
-            .then(data => {
-                console.log("Query data:", data);
-                // Populate the UI with data
-            });
-    </script>
+    <h2>Live Access Points & Clients</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>MAC</th>
+                <th>SSID</th>
+                <th>Encryption</th>
+                <th>Signal</th>
+                <th>Last Seen</th>
+                <th>Channel</th>
+                <th>Extended Capabilities</th>
+                <th>Clients</th>
+            </tr>
+        </thead>
+        <tbody id="apTableBody"></tbody>
+    </table>
+
+    <h2>Run Query</h2>
+    <div class="dropdown-container">
+        <label for="queryDropdown">Select a Query:</label>
+        <select id="queryDropdown"></select>
+        <button onclick="runQuery()">Run</button>
+    </div>
+    <div id="queryResults"></div>
 </body>
 </html>
+

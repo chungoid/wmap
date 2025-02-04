@@ -1,23 +1,42 @@
 import yaml
+import logging
 from config.config import CONFIG
 
-def load_queries(query_file=None):
-    """
-    Load queries from the YAML file.
-    If no query file is specified, defaults to CONFIG['queries_file'].
-    """
-    query_file = query_file or CONFIG.get("queries_file")
-    if not query_file:
-        raise ValueError("No query file specified and none defined in the configuration.")
+web_logger = logging.getLogger("web")
+web_logger.setLevel(logging.DEBUG)
 
+
+def load_queries(query_file):
+    """
+    Load and validate queries.yaml, ensuring it follows the correct structure.
+    """
     try:
         with open(query_file, "r") as file:
-            return yaml.safe_load(file)
+            data = yaml.safe_load(file)
+
+        # Ensure the root key is present
+        if "categories" not in data:
+            raise ValueError("Invalid format: Missing 'categories' key at root level.")
+
+        # Validate each category
+        for category in data["categories"]:
+            if "name" not in category or "queries" not in category:
+                raise ValueError(f"Invalid category format: {category}")
+
+            for query in category["queries"]:
+                if "id" not in query or "description" not in query or "sql" not in query:
+                    raise ValueError(f"Invalid query format: {query}")
+
+        return data
+
     except FileNotFoundError:
-        raise FileNotFoundError(f"Query file '{query_file}' not found.")
+        raise FileNotFoundError(f"Query file not found: {query_file}")
+
     except yaml.YAMLError as e:
         raise ValueError(f"Error parsing YAML file '{query_file}': {e}")
 
+    except Exception as e:
+        raise ValueError(f"Unexpected error loading queries: {e}")
 def get_query_by_id(queries, query_id):
     """
     Retrieve a query by its ID.
