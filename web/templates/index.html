@@ -9,6 +9,11 @@
         document.addEventListener("DOMContentLoaded", function () {
             const socket = io();
 
+            // ** Debug WebSocket Connection **
+            socket.on("connect", function () {
+                console.log("Connected to WebSocket");
+            });
+
             socket.on("update_ap_client_data", function (data) {
                 console.log("Received AP & Client Data:", data);
                 updateAPTable(data);
@@ -17,7 +22,6 @@
             function updateAPTable(data) {
                 let tableBody = document.getElementById("apTableBody");
                 tableBody.innerHTML = "";
-
                 let unassociatedClients = [];
 
                 if (!Array.isArray(data) || data.length === 0) {
@@ -48,6 +52,7 @@
                     `;
                     tableBody.appendChild(row);
 
+                    // Collect unassociated clients
                     ap.clients.forEach(client => {
                         if (!client.associated_ap || client.associated_ap === "Unknown" || client.associated_ap === "ff:ff:ff:ff:ff:ff") {
                             unassociatedClients.push(client);

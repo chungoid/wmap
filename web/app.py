@@ -1,3 +1,5 @@
+import threading
+
 import eventlet
 eventlet.monkey_patch()
 
@@ -26,9 +28,9 @@ web_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 web_handler.setFormatter(web_formatter)
 web_logger.addHandler(web_handler)
 
-# **Flask App & SocketIO**
+# **Initialize Flask & SocketIO**
 app = Flask(__name__, static_folder="static", template_folder="templates")
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*")  # Do NOT use async_mode="eventlet"
 
 # Paths
 QUERY_FILE = os.path.join("config", "queries.yaml")
@@ -90,21 +92,17 @@ def emit_live_data():
                 "clients": client_mapping.get(mac, [])  # Attach associated clients
             })
 
-        # Log structured data before emitting
-        web_logger.debug(f"Formatted AP Data for Emission: {formatted_aps}")
+        # Log emitted data
+        web_logger.debug(f"Emitting AP & Client Data: {formatted_aps}")
 
-        # Log if GPS data exists (Check if table has `latitude` and `longitude`)
-        gps_query = "SELECT latitude, longitude FROM access_points WHERE latitude IS NOT NULL AND longitude IS NOT NULL"
-        gps_results = execute_query(gps_query)
-        if gps_results:
-            web_logger.info(f"GPS Data Found: {gps_results}")
-        else:
-            web_logger.warning("No GPS Data Found in access_points.")
-
-        # Emit updates (without `broadcast=True`)
+        # **Emit data to clients**
         socketio.emit("update_ap_client_data", formatted_aps)
 
-        eventlet.sleep(5)  # Non-blocking sleep, prevents hcxdumptool from stalling updates
+        # **Use `socketio.sleep()` instead of `time.sleep()` to prevent blocking**
+        socketio.sleep(5)
+
+# **Start emitting live data in a separate thread**
+threading.Thread(target=emit_live_data, daemon=True).start()
 
 
 # **Serve Homepage**
