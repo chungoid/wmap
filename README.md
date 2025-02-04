@@ -19,13 +19,6 @@ pip install -r requirements.txt
 
 ## Usage
 ```
-example:
-    sudo python3 wmap -sk <your key>
-    sudo python3 wmap -g -a wlan0 
-    sudo python3 wmap -u
-    sudo python3 wmap -d
-    
-
 usage: wmap [-h] [-a] [-p] [-g] [-e PCAPNG_FILE [NMEA_FILE ...]] [-u [UPLOAD]] [-d [DOWNLOAD]] [-sk SET_KEY] [-gk] [-nw] [interface]
 
 Wireless capturing, parsing, and analyzing.
