@@ -4,7 +4,8 @@ import logging
 
 from config.config import CONFIG
 
-logger = logging.getLogger('wpa_sec')
+
+logger = logging.getLogger("wmap")
 
 def download_potfile(output_file, db_conn):
     """Download the potfile from WPA-SEC."""

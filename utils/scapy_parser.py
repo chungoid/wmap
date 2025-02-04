@@ -1,8 +1,10 @@
 import logging
 import os
 import signal
-import json
 import time
+import datetime
+import re
+import json
 
 from datetime import datetime
 from scapy.error import Scapy_Exception
@@ -14,14 +16,326 @@ from scapy.layers.dot11 import (
 
 from config.config import DEFAULT_OUI_PATH
 
-
-logger = logging.getLogger("scapy_parser")
+logger = logging.getLogger("wmap")
 oui_file = DEFAULT_OUI_PATH
 
-if not os.path.exists(oui_file):
-    print(f"OUI file not found at {oui_file}")
-else:
-    print(f"OUI file found at {oui_file}")
+def live_scan(capture_file, db_conn, process, gps_file=None):
+    """Live scan parsing that continuously reads from the capture file."""
+    logger.info(f"Starting live parsing on: {capture_file}")
+
+    device_dict = {}  # Ensure persistent tracking of detected devices**
+    oui_mapping = parse_oui_file()  # Load OUI mapping once at the start
+
+    gps_data = None  # Initialize GPS data
+
+    try:
+        # Wait until the capture file is created
+        while not os.path.exists(capture_file):
+            logger.info(f"Waiting for capture file: {capture_file}")
+            time.sleep(3)
+
+        logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
+
+        while process.poll() is None:  # Ensure hcxdumptool is still running
+            try:
+                # Update GPS data if GPS file exists
+                if gps_file and os.path.exists(gps_file):
+                    gps_data = process_nmea(gps_file)  # Continuously update GPS data
+
+                with PcapReader(capture_file) as pcap_reader:
+                    packet_count = 0
+                    for packet in pcap_reader:
+                        try:
+                            # Pass `oui_mapping` and `gps_data` to `parse_packet()`
+                            parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=gps_data)
+                            packet_count += 1
+
+                            # Commit to DB every 50 packets
+                            if packet_count % 50 == 0:
+                                store_results_in_db(device_dict, db_conn)
+                                db_conn.commit()
+
+                        except (Scapy_Exception, ValueError) as e:
+                            logger.warning(f"Skipped corrupted packet: {e}")
+                            continue
+                        except Exception as e:
+                            logger.error(f"Unexpected parsing error: {e}")
+                            continue
+
+                time.sleep(1)  # Allow time for new packets before reopening the file
+
+            except FileNotFoundError:
+                logger.warning(f"Capture file {capture_file} not found. Waiting...")
+                time.sleep(2)
+            except Exception as e:
+                logger.error(f"Unexpected error during live scanning: {e}")
+
+    except KeyboardInterrupt:
+        logger.info("Stopping live scan. Terminating hcxdumptool...")
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+
+    finally:
+        # Final DB Commit
+        store_results_in_db(device_dict, db_conn)
+        db_conn.commit()
+        logger.info("Closing database connection after live scanning.")
+
+
+def process_pcapng(pcap_file, db_conn, gps_data=None):
+    """
+    Process a PCAP file and parse its packets.
+
+    Args:
+        pcap_file (str): Path to the PCAP file to process.
+        db_conn: SQLite database connection.
+        gps_data (dict, optional): GPS timestamp-to-coordinates mapping from NMEA.
+
+    """
+    device_dict = {}  # Initialize a dictionary to track detected devices
+    oui_mapping = parse_oui_file()  # Load OUI file for MAC-to-manufacturer mapping
+
+    try:
+        logger.info(f"Processing PCAP file: {pcap_file}")
+
+        with PcapReader(pcap_file) as pcap_reader:
+            for packet in pcap_reader:
+                try:
+                    parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=gps_data)
+                except Scapy_Exception as e:
+                    logger.warning(f"Skipped corrupted packet: {e}")
+                    continue  # Skip invalid packets
+
+        # **Store final results in the database**
+        logger.debug(f"Device dictionary after processing: {device_dict}")
+        store_results_in_db(device_dict, db_conn)
+        logger.info("PCAP processing complete.")
+
+    except FileNotFoundError:
+        logger.error(f"PCAP file not found: {pcap_file}")
+    except Exception as e:
+        logger.error(f"Error processing PCAP file: {e}")
+
+
+def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
+    """Parse a packet and extract APs, clients, and optionally GPS latitude/longitude, with WPS & Extended Capabilities."""
+    try:
+        if not packet.haslayer(Dot11):
+            return  # Skip non-802.11 packets
+
+        frame_type = None
+        packet_length = len(packet)
+        dbm_signal = getattr(packet[RadioTap], 'dBm_AntSignal', None) if packet.haslayer(RadioTap) else None
+
+        mac = getattr(packet[Dot11], 'addr2', '').lower()
+        if not mac:
+            return  # Skip if MAC is missing
+
+        # Determine the frame subtype
+        if packet.haslayer(Dot11Beacon):
+            frame_type = "beacon"
+        elif packet.haslayer(Dot11ProbeResp):
+            frame_type = "probe_resp"
+        elif packet.haslayer(Dot11ProbeReq):
+            frame_type = "probe_req"
+        elif packet.haslayer(Dot11Auth):
+            frame_type = "auth"
+        elif packet.haslayer(Dot11AssoReq):
+            frame_type = "assoc_req"
+        elif packet.haslayer(Dot11AssoResp):
+            frame_type = "assoc_resp"
+        elif packet.haslayer(Dot11ReassoReq):
+            frame_type = "reassoc_req"
+        elif packet.haslayer(Dot11ReassoResp):
+            frame_type = "reassoc_resp"
+        elif packet.haslayer(Dot11Disas):
+            frame_type = "disas"
+        elif packet.haslayer(Dot11Deauth):
+            frame_type = "deauth"
+
+        # Process Access Points
+        if packet.haslayer(Dot11Beacon) or packet.haslayer(Dot11ProbeResp):
+            logger.debug(f"Processing AP frame (Beacon or Probe Response) for {mac}.")
+
+            ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
+            stats = packet[Dot11Beacon].network_stats() if packet.haslayer(Dot11Beacon) else {}
+            channel = stats.get('channel', 0)
+            crypto = stats.get('crypto', 'None')
+
+            # Ensure encryption is stored as a string instead of a set
+            if isinstance(crypto, set):
+                crypto = ", ".join(crypto)  # Convert set to string
+
+            manufacturer = get_manufacturer(mac, oui_mapping)
+
+            # Detect WPS Before Parsing Extended Capabilities
+            wps_info = None
+            extended_capabilities = "No Extended Capabilities"
+
+            if packet.haslayer(Dot11Elt):
+                elt = packet[Dot11Elt]
+                while isinstance(elt, Dot11Elt):
+                    if elt.ID == 221:  # Vendor-Specific IE (0xDD) - Check for WPS
+                        vendor_data = elt.info
+                        if vendor_data[:3] == b'\x00\x50\xF2' and vendor_data[3] == 0x04:  # WPS OUI + Type 0x04
+                            try:
+                                wps_config_methods = int.from_bytes(vendor_data[8:10], 'big') if len(vendor_data) > 9 else None
+                                config_methods = []
+                                if wps_config_methods:
+                                    if wps_config_methods & 0x0100:
+                                        config_methods.append("PIN Mode (Pixie Dust Vulnerable)")
+                                    if wps_config_methods & 0x0800:
+                                        config_methods.append("Virtual Display")
+                                if config_methods:
+                                    wps_info = ", ".join(config_methods)
+                            except Exception as e:
+                                logger.error(f"Failed to extract WPS details for {mac}: {e}")
+
+                    elif elt.ID == 127:  # Extended Capabilities Tag
+                        try:
+                            hex_data = elt.info.hex()
+                            if len(hex_data) > 2:
+                                extended_capabilities = decode_extended_capabilities(hex_data)
+                        except Exception as e:
+                            logger.error(f"Failed to process extended capabilities for {mac}: {e}")
+                            extended_capabilities = "No Extended Capabilities"
+                    elt = elt.payload
+
+            if wps_info:
+                extended_capabilities = (
+                    f"{extended_capabilities}, {wps_info}" if extended_capabilities != "No Extended Capabilities" else wps_info
+                )
+
+            # Ensure AP exists in device_dict
+            if mac not in device_dict:
+                device_dict[mac] = {
+                    'mac': mac, 'ssid': ssid, 'encryption': crypto,
+                    'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'channel': channel,
+                    'extended_capabilities': extended_capabilities, 'clients': [], 'total_data': packet_length,
+                    'frame_counts': {}
+                }
+
+            # Update frame counts for AP
+            device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
+
+        # Process Clients
+        elif frame_type in ["probe_req", "auth", "assoc_req", "assoc_resp", "reassoc_req", "reassoc_resp", "disas", "deauth"]:
+            logger.debug(f"Processing Client frame for {mac}.")
+
+            associated_ap = getattr(packet[Dot11], 'addr1', '').lower()
+            ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
+            manufacturer = get_manufacturer(mac, oui_mapping)
+
+            # Insert or update client data
+            if mac not in device_dict:
+                device_dict[mac] = {
+                    'mac': mac, 'ssid': ssid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'associated_ap': associated_ap,
+                    'total_data': packet_length, 'frame_counts': {}
+                }
+
+            # Update frame counts for clients
+            device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
+
+        # GPS Data Matching (if Available)
+        if gps_data and len(gps_data) > 0:
+            timestamp = packet.time  # Extract timestamp from packet
+
+            # Find the closest timestamp safely
+            closest_timestamp = None
+            if gps_data:
+                closest_timestamp = min(gps_data.keys(), key=lambda t: abs(t - timestamp), default=None)
+
+            if closest_timestamp is not None:
+                latitude, longitude = gps_data.get(closest_timestamp, (None, None))
+            else:
+                latitude, longitude = None, None  # Fallback if no GPS match found
+
+            # Assign GPS coordinates to the device entry
+            device_dict[mac]['latitude'] = latitude
+            device_dict[mac]['longitude'] = longitude
+
+        # Debugging Device Dictionary Before Storing
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Device Dictionary Before Storing:\n{json.dumps(device_dict, indent=4)}")
+
+        # Pass Device Dictionary to Database Storage
+        store_results_in_db(device_dict, db_conn)
+
+    except Exception as e:
+        logger.error(f"Error parsing packet: {e}")
+
+
+def store_results_in_db(device_dict, db_conn):
+    """Store parsed results into the database and retain frame_counts."""
+
+    logger.debug(f"Parsed Device Dictionary Before DB Insert:\n{json.dumps(device_dict, indent=4)}")
+
+    try:
+        cursor = db_conn.cursor()
+
+        for mac, device_info in device_dict.items():
+            try:
+                latitude = device_info.get("latitude")
+                longitude = device_info.get("longitude")
+
+                if "associated_ap" in device_info:  # Client Table
+                    cursor.execute("""
+                        INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap,
+                                            total_data, frame_counts, latitude, longitude)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(mac) DO UPDATE SET
+                        ssid=excluded.ssid, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
+                        signal_strength=excluded.signal_strength, associated_ap=excluded.associated_ap,
+                        total_data=clients.total_data + excluded.total_data,
+                        frame_counts=excluded.frame_counts,
+                        latitude=excluded.latitude,
+                        longitude=excluded.longitude
+                    """, (device_info['mac'], device_info.get('ssid', ''), device_info['last_seen'],
+                          device_info['manufacturer'], device_info['signal_strength'],
+                          device_info.get('associated_ap', 'Unknown'), device_info.get('total_data', 0),
+                          json.dumps(device_info.get("frame_counts", {})), latitude, longitude))
+
+                    logger.debug(
+                        f"Client inserted into database: {mac} -> Associated AP: {device_info.get('associated_ap', 'Unknown')}")
+
+                else:  # Access Point Entry
+                    encryption = device_info.get('encryption', 'None')
+
+                    # Convert encryption from set to string if necessary
+                    if isinstance(encryption, set):
+                        encryption = ", ".join(encryption)
+                    elif not isinstance(encryption, str):
+                        encryption = str(encryption)
+
+                    logger.debug(f"Inserting AP into DB: {device_info}")
+
+                    cursor.execute("""
+                        INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel,
+                                                   extended_capabilities, total_data, frame_counts, latitude, longitude)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(mac) DO UPDATE SET
+                        ssid=excluded.ssid, encryption=excluded.encryption, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
+                        signal_strength=excluded.signal_strength, channel=excluded.channel, extended_capabilities=excluded.extended_capabilities,
+                        total_data=access_points.total_data + excluded.total_data,
+                        frame_counts=excluded.frame_counts,
+                        latitude=excluded.latitude,
+                        longitude=excluded.longitude
+                    """, (device_info['mac'], device_info.get('ssid', ''), encryption, device_info['last_seen'],
+                          device_info['manufacturer'], device_info['signal_strength'], device_info['channel'],
+                          device_info.get('extended_capabilities', 'None'), device_info.get('total_data', 0),
+                          json.dumps(device_info.get("frame_counts", {})), latitude, longitude))
+
+                    logger.debug(f"Access Point inserted into database: {mac}")
+
+            except Exception as e:
+                logger.error(f"Error inserting {mac} into database: {e}")
+
+        db_conn.commit()
+        logger.debug("Database commit successful.")
+
+    except Exception as e:
+        logger.error(f"Error storing results in the database: {e}")
 
 
 def decode_extended_capabilities(data):
@@ -95,6 +409,7 @@ def parse_oui_file():
         logger.error(f"Error parsing OUI file: {e}")
     return oui_mapping
 
+
 def get_manufacturer(mac, oui_mapping):
     """
     Get the manufacturer from the OUI mapping based on the MAC address.
@@ -114,293 +429,151 @@ def get_manufacturer(mac, oui_mapping):
         return "Unknown"
 
 
-def parse_packet(packet, device_dict, oui_mapping, db_conn):
-    """Parse a packet and extract information about access points and clients, ensuring proper WPS detection."""
-    try:
-        if not packet.haslayer(Dot11):
-            return  # Skip non-802.11 packets
-
-        frame_type = None
-        packet_length = len(packet)
-        dbm_signal = getattr(packet[RadioTap], 'dBm_AntSignal', None) if packet.haslayer(RadioTap) else None
-        cursor = db_conn.cursor()
-
-        mac = getattr(packet[Dot11], 'addr2', '').lower()
-        if not mac:
-            return  # Skip if MAC is missing
-
-        # Determine the frame subtype
-        if packet.haslayer(Dot11Beacon):
-            frame_type = "beacon"
-        elif packet.haslayer(Dot11ProbeResp):
-            frame_type = "probe_resp"
-        elif packet.haslayer(Dot11ProbeReq):
-            frame_type = "probe_req"
-        elif packet.haslayer(Dot11Auth):
-            frame_type = "auth"
-        elif packet.haslayer(Dot11AssoReq):
-            frame_type = "assoc_req"
-        elif packet.haslayer(Dot11AssoResp):
-            frame_type = "assoc_resp"
-        elif packet.haslayer(Dot11ReassoReq):
-            frame_type = "reassoc_req"
-        elif packet.haslayer(Dot11ReassoResp):
-            frame_type = "reassoc_resp"
-        elif packet.haslayer(Dot11Disas):
-            frame_type = "disas"
-        elif packet.haslayer(Dot11Deauth):
-            frame_type = "deauth"
-
-        # **Check if MAC is already classified as a client**
-        cursor.execute("SELECT mac FROM clients WHERE mac = ?", (mac,))
-        client_entry = cursor.fetchone()
-        if client_entry:
-            logger.warning(f"Skipping AP insertion for {mac}, it is already classified as a client.")
-            return
-
-        # **Process Access Points**
-        if packet.haslayer(Dot11Beacon) or packet.haslayer(Dot11ProbeResp):
-            logger.debug(f"Processing AP frame (Beacon or Probe Response) for {mac}.")
-
-            ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
-            stats = packet[Dot11Beacon].network_stats() if packet.haslayer(Dot11Beacon) else {}
-            channel = stats.get('channel', 0)
-            crypto = stats.get('crypto', 'None')
-            manufacturer = get_manufacturer(mac, oui_mapping)
-
-            # **Detect WPS Before Parsing Extended Capabilities**
-            wps_info = None
-            extended_capabilities = "No Extended Capabilities"  # Default
-
-            if packet.haslayer(Dot11Elt):
-                elt = packet[Dot11Elt]
-                while isinstance(elt, Dot11Elt):
-                    if elt.ID == 221:  # Vendor-Specific IE (0xDD) - Check for WPS
-                        vendor_data = elt.info
-                        if vendor_data[:3] == b'\x00\x50\xF2' and vendor_data[3] == 0x04:  # WPS OUI + Type 0x04
-                            try:
-                                logger.debug(f"Detected possible WPS block in {mac}: {vendor_data.hex()}")
-
-                                # **Extract WPS config methods**
-                                wps_config_methods = int.from_bytes(vendor_data[8:10], 'big') if len(vendor_data) > 9 else None
-
-                                # **Check if WPS meets Pixie Dust or Virtual Display criteria**
-                                config_methods = []
-                                if wps_config_methods:
-                                    logger.debug(f"WPS Config Methods for {mac}: {bin(wps_config_methods)}")
-
-                                    if wps_config_methods & 0x0100:
-                                        config_methods.append("PIN Mode (Pixie Dust Vulnerable)")
-                                    if wps_config_methods & 0x0800:
-                                        config_methods.append("Virtual Display")
-
-                                # **Only store WPS if it's vulnerable**
-                                if config_methods:
-                                    wps_info = ", ".join(config_methods)
-
-                            except Exception as e:
-                                logger.error(f"Failed to extract WPS details for {mac}: {e}")
-
-                    elif elt.ID == 127:  # Extended Capabilities Tag
-                        try:
-                            hex_data = elt.info.hex()
-                            logger.debug(f"Raw Extended Capabilities Data for {mac}: {hex_data}")
-                            if len(hex_data) > 2:
-                                extended_capabilities = decode_extended_capabilities(hex_data)
-                        except Exception as e:
-                            logger.error(f"Failed to process extended capabilities for {mac}: {e}")
-                            extended_capabilities = "No Extended Capabilities"  # Fallback
-                    elt = elt.payload  # Move to next Information Element (IE)
-
-            # **Ensure Proper Formatting: Append WPS Details If Found**
-            if wps_info:
-                extended_capabilities = (
-                    f"{extended_capabilities}, {wps_info}" if extended_capabilities != "No Extended Capabilities" else wps_info
-                )
-
-            # **Ensure AP exists in device_dict**
-            if mac not in device_dict:
-                device_dict[mac] = {
-                    'mac': mac, 'ssid': ssid, 'encryption': crypto,
-                    'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'channel': channel,
-                    'extended_capabilities': extended_capabilities, 'clients': [], 'total_data': packet_length,
-                    'frame_counts': {}  # Initialize frame_counts
-                }
-
-            # **Update frame counts for AP**
-            device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
-
-        # **Process Clients**
-        elif frame_type in ["probe_req", "auth", "assoc_req", "assoc_resp", "reassoc_req", "reassoc_resp", "disas", "deauth"]:
-            logger.debug(f"Processing Client frame for {mac}.")
-
-            associated_ap = getattr(packet[Dot11], 'addr1', '').lower()
-            ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
-            manufacturer = get_manufacturer(mac, oui_mapping)
-
-            # **Insert or update client data**
-            if mac not in device_dict:
-                device_dict[mac] = {
-                    'mac': mac, 'ssid': ssid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'associated_ap': associated_ap,
-                    'total_data': packet_length, 'frame_counts': {}
-                }
-
-            # **Update frame counts for clients**
-            device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
-
-    except Exception as e:
-        logger.error(f"Error parsing packet: {e}")
-
-def store_results_in_db(device_dict, db_conn):
-    """Store parsed results into the database and retain frame_counts."""
-    try:
-        cursor = db_conn.cursor()
-
-        for mac, device_info in device_dict.items():
-            try:
-                # **Retrieve existing frame_counts before updating**
-                cursor.execute("SELECT frame_counts FROM access_points WHERE mac = ?", (mac,))
-                result = cursor.fetchone()
-                if result:
-                    try:
-                        existing_frame_counts = json.loads(result[0]) if result[0] else {}
-                    except json.JSONDecodeError:
-                        existing_frame_counts = {}
-                else:
-                    existing_frame_counts = {}
-
-                # **Merge new frame counts**
-                for frame_type, count in device_info.get("frame_counts", {}).items():
-                    existing_frame_counts[frame_type] = existing_frame_counts.get(frame_type, 0) + count
-
-                frame_counts_json = json.dumps(existing_frame_counts)
-
-                if "associated_ap" in device_info:  # Client
-                    cursor.execute("""
-                    INSERT INTO clients (mac, ssid, last_seen, manufacturer, signal_strength, associated_ap, total_data, frame_counts)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(mac) DO UPDATE SET
-                    ssid=excluded.ssid, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
-                    signal_strength=excluded.signal_strength, associated_ap=excluded.associated_ap,
-                    total_data=clients.total_data + excluded.total_data,
-                    frame_counts=excluded.frame_counts
-                    """, (device_info['mac'], device_info['ssid'], device_info['last_seen'], device_info['manufacturer'],
-                          device_info['signal_strength'], device_info['associated_ap'], device_info.get('total_data', 0), frame_counts_json))
-
-                else:  # Access Point
-                    encryption = ",".join(device_info['encryption']) if isinstance(device_info.get('encryption', ''), set) else device_info.get('encryption', '')
-
-                    # **Log Extended Capabilities for Debugging**
-                    logger.debug(f"Storing Extended Capabilities for {mac}: {device_info['extended_capabilities']}")
-
-                    cursor.execute("""
-                    INSERT INTO access_points (mac, ssid, encryption, last_seen, manufacturer, signal_strength, channel, extended_capabilities, total_data, frame_counts)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(mac) DO UPDATE SET
-                    ssid=excluded.ssid, encryption=excluded.encryption, last_seen=excluded.last_seen, manufacturer=excluded.manufacturer,
-                    signal_strength=excluded.signal_strength, channel=excluded.channel, extended_capabilities=excluded.extended_capabilities,
-                    total_data=access_points.total_data + excluded.total_data,
-                    frame_counts=excluded.frame_counts
-                    """, (device_info['mac'], device_info['ssid'], encryption, device_info['last_seen'],
-                          device_info['manufacturer'], device_info['signal_strength'], device_info['channel'],
-                          device_info['extended_capabilities'], device_info.get('total_data', 0), frame_counts_json))
-
-            except Exception as e:
-                logger.error(f"Error inserting {mac} into database: {e}")
-
-        db_conn.commit()
-
-    except Exception as e:
-        logger.error(f"Error storing results in the database: {e}")
-
-
-def process_pcap(pcap_file, db_conn):
+def process_nmea(nmea_file):
     """
-    Process a PCAP file and parse its packets.
+    Process an NMEA file and extract timestamped GPS coordinates.
 
     Args:
-        pcap_file: Path to the PCAP file to process.
-        db_conn: SQLite database connection.
+        nmea_file (str): Path to the .nmea file.
+
+    Returns:
+        dict: Dictionary mapping timestamps to GPS coordinates {timestamp: (latitude, longitude)}
     """
-    device_dict = {}  # Initialize the device dictionary
-    oui_mapping = parse_oui_file()  # Load OUI file
+    gps_data = {}
 
     try:
-        logger.info(f"Processing PCAP file: {pcap_file}")
+        with open(nmea_file, "r") as file:
+            for line in file:
+                # Match NMEA sentences ($GPGGA or $GPRMC)
+                match = re.match(r"\$(GPGGA|GPRMC),([^*]+)", line)
+                if not match:
+                    continue  # Ignore non-GPS lines
 
-        with PcapReader(pcap_file) as pcap_reader:
-            for packet in pcap_reader:
-                try:
-                    parse_packet(packet, device_dict, oui_mapping, db_conn)
-                except Scapy_Exception as e:
-                    logger.warning(f"Skipped corrupted packet: {e}")
-                    continue  # **Skip invalid packets instead of stopping**
+                sentence_type, data = match.groups()
+                fields = data.split(",")
 
-        logger.debug(f"Device dictionary after processing: {device_dict}")
-        store_results_in_db(device_dict, db_conn)
-        logger.info("PCAP processing complete.")
+                if sentence_type == "GPGGA" and len(fields) >= 6:
+                    time_raw, lat_raw, lat_dir, lon_raw, lon_dir = fields[:5]
+
+                elif sentence_type == "GPRMC" and len(fields) >= 7:
+                    time_raw, lat_raw, lat_dir, lon_raw, lon_dir = fields[1:6]
+
+                else:
+                    continue  # Skip malformed data
+
+                # Convert GPS time to Unix timestamp
+                timestamp = convert_nmea_time(time_raw)
+
+                # Convert latitude and longitude to decimal degrees
+                latitude = convert_nmea_coordinates(lat_raw, lat_dir)
+                longitude = convert_nmea_coordinates(lon_raw, lon_dir)
+
+                if latitude is not None and longitude is not None:
+                    gps_data[timestamp] = (latitude, longitude)
 
     except FileNotFoundError:
-        logger.error(f"PCAP file not found: {pcap_file}")
+        logger.warning(f"NMEA file not found: {nmea_file}")
     except Exception as e:
-        logger.error(f"Error processing PCAP file: {e}")
+        logger.error(f"Error processing NMEA file: {e}")
+
+    logger.debug(f"Processed GPS Data: {gps_data}")  # Debugging output
+    return gps_data if gps_data else {}  # **Ensure a valid dictionary is always returned**
 
 
-def live_scan(capture_file, db_conn, process):
-    """Live scan parsing that continuously reads from the capture file."""
-    logger.info(f"Starting live parsing on: {capture_file}")
+def convert_nmea_time(nmea_time):
+    """
+    Convert NMEA time (HHMMSS) into a Unix timestamp.
 
-    device_dict = {}  # **Ensure persistent tracking of detected devices**
+    Args:
+        nmea_time (str): Time from NMEA sentence (e.g., '123456' for 12:34:56 UTC).
 
+    Returns:
+        float: Unix timestamp.
+    """
     try:
-        # **Wait until the capture file is created**
-        while not os.path.exists(capture_file):
-            logger.info(f"Waiting for capture file: {capture_file}")
-            time.sleep(3)
+        # Extract HH, MM, SS from NMEA format
+        hours, minutes, seconds = int(nmea_time[:2]), int(nmea_time[2:4]), int(nmea_time[4:6])
 
-        logger.info("hcxdumptool started. Parsing packets in real-time... Press Ctrl+C to stop.")
+        # Get current UTC date
+        now = time.gmtime()  # Get current UTC time struct
+        timestamp = time.mktime((now.tm_year, now.tm_mon, now.tm_mday, hours, minutes, seconds, 0, 0, 0))
 
-        while process.poll() is None:  # **Ensure hcxdumptool is still running**
-            try:
-                with PcapReader(capture_file) as pcap_reader:
-                    packet_count = 0
-                    for packet in pcap_reader:
-                        try:
-                            parse_packet(packet, device_dict, oui_mapping=parse_oui_file(), db_conn=db_conn)
-                            packet_count += 1
+        return timestamp
+    except ValueError:
+        return None  # Return None if time conversion fails
 
-                            # **Commit to DB every 50 packets**
-                            if packet_count % 50 == 0:
-                                store_results_in_db(device_dict, db_conn)
-                                db_conn.commit()
 
-                        except Scapy_Exception as e:
-                            logger.warning(f"Skipped corrupted packet: {e}")
-                            continue
-                        except ValueError as e:
-                            logger.warning(f"Malformed packet skipped: {e}")
-                            continue
-                        except Exception as e:
-                            logger.error(f"Unexpected parsing error: {e}")
-                            continue
+def convert_nmea_coordinates(value, direction):
+    """
+    Convert NMEA latitude/longitude format to decimal degrees.
 
-                time.sleep(1)  # **Allow time for new packets before reopening the file**
+    Args:
+        value (str): Latitude or longitude value from NMEA (e.g., '4807.038' for 48°07.038').
+        direction (str): Direction ('N', 'S', 'E', 'W').
 
-            except FileNotFoundError:
-                logger.warning(f"Capture file {capture_file} not found. Waiting...")
-                time.sleep(2)
-            except Exception as e:
-                logger.error(f"Unexpected error during live scanning: {e}")
+    Returns:
+        float: Decimal degrees.
+    """
+    try:
+        if not value:
+            return None
 
-    except KeyboardInterrupt:
-        logger.info("Stopping live scan. Terminating hcxdumptool...")
-        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        # Split degrees and minutes
+        if "." in value:
+            degrees = int(value[:-7])  # Extract degrees (first part)
+            minutes = float(value[-7:])  # Extract minutes (remaining)
+        else:
+            return None  # Invalid format
 
-    finally:
-        # **Final DB Commit to ensure latest results are saved**
-        store_results_in_db(device_dict, db_conn)
-        db_conn.commit()
-        logger.info("Closing database connection after live scanning.")
+        # Convert to decimal degrees
+        decimal_degrees = degrees + (minutes / 60)
 
+        # Apply direction
+        if direction in ["S", "W"]:
+            decimal_degrees = -decimal_degrees
+
+        return decimal_degrees
+    except ValueError:
+        return None  # Return None if conversion fails
+
+
+def parse_nmea_sentence(nmea_sentence):
+    """
+    Parse an NMEA sentence to extract timestamp, latitude, and longitude.
+
+    Args:
+        nmea_sentence (str): A raw NMEA sentence (e.g., $GPGGA or $GPRMC).
+
+    Returns:
+        tuple: (timestamp, latitude, longitude) or (None, None, None) if parsing fails.
+    """
+    try:
+        # Match NMEA sentence types
+        match = re.match(r"\$(GPGGA|GPRMC),([^*]+)", nmea_sentence)
+        if not match:
+            return None, None, None  # Invalid sentence
+
+        sentence_type, data = match.groups()
+        fields = data.split(",")
+
+        if sentence_type == "GPGGA" and len(fields) >= 6:
+            time_raw, lat_raw, lat_dir, lon_raw, lon_dir = fields[:5]
+        elif sentence_type == "GPRMC" and len(fields) >= 7:
+            time_raw, lat_raw, lat_dir, lon_raw, lon_dir = fields[1:6]
+        else:
+            return None, None, None  # Skip malformed data
+
+        # Convert NMEA time to Unix timestamp
+        timestamp = convert_nmea_time(time_raw)
+
+        # Convert latitude and longitude to decimal degrees
+        latitude = convert_nmea_coordinates(lat_raw, lat_dir)
+        longitude = convert_nmea_coordinates(lon_raw, lon_dir)
+
+        if latitude is not None and longitude is not None:
+            return timestamp, latitude, longitude
+
+    except Exception as e:
+        logger.error(f"Failed to parse NMEA sentence: {nmea_sentence} - {e}")
+
+    return None, None, None  # Return empty values if parsing fails

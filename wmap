@@ -1,95 +1,164 @@
-#!/usr/bin/env Python3
-import os
+#!/usr/bin/env python3
 import argparse
+import os
 import subprocess
 import logging
 
+from utils import scapy_parser, wpa_sec, setup_work, helpers
 from config.config import CONFIG, setup_logging
-from utils import scapy_parser, wpa_sec, setup_work
+from utils.scapy_parser import process_nmea
 from utils.setup_work import get_db_connection
+from utils.helpers import generate_capture_filename, generate_nmea_filename
+
+
+def initialize():
+    logger = None
+    try:
+        setup_logging()
+        logger = logging.getLogger("wmap")
+        logger.info("Logger initialized.")
+
+        # Ensure log directory ownership is fixed
+        from utils.helpers import fix_permissions
+        fix_permissions([CONFIG["log_dir"]])
+
+    except Exception as e:
+        print(f"Error initializing logging: {e}")
+
+    # Ensure directory and fix ownership
+    try:
+        setup_work.ensure_directories_and_database()
+        logger.info("Directories and database ensured.")
+        logger.info("Fixed directory ownerships.")
+    except Exception as e:
+        logger.error(f"Error ensuring directories or fixing ownership: {e}")
+        return
+
+    return logger
 
 
 def main():
     """Main function to handle scanning, packet parsing, and WPA-SEC interactions."""
-    # **Initialize Logging & Directories**
-    setup_work.ensure_directories_and_database()
-    setup_logging()
-    logger = logging.getLogger("wmap")
-    logger.info("Starting wmap application.")
+    try:
+        logger = initialize()
+        logger.info("Starting wmap...")
+    except Exception as e:
+        print(f"Fatal Error: {e}")
+        return
 
-    # **Initialize Argparse**
+    # Initialize Argparse
     parser = argparse.ArgumentParser(description="Wireless capturing, parsing, and analyzing.")
 
-    # **Add Arguments**
-    parser.add_argument("--active", action="store_true", help="Enable active scanning mode")
-    parser.add_argument("--passive", action="store_true", help="Enable passive scanning mode")
+    parser.add_argument("-a", "--active", action="store_true", help="Enable active scanning mode")
+    parser.add_argument("-p", "--passive", action="store_true", help="Enable passive scanning mode")
+    parser.add_argument("-g", "--gpsd", action="store_true", help="Enable GPS logging with hcxdumptool")
+
+    # Require both PCAPNG and NMEA for --existing
+    parser.add_argument(
+        "-e", "--existing", nargs="+", metavar=("PCAPNG_FILE", "NMEA_FILE"),
+        help="Parse an existing PCAPNG file. Optionally provide an NMEA file for GPS data."
+    )
+
     parser.add_argument("interface", nargs="?", help="Name of the wireless interface (required for scanning)")
-    parser.add_argument("--parse-existing", type=str, help="Parse an existing capture file (e.g., /path/to/file.pcap)")
-    parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"], help="Upload PCAP(s) to WPA-SEC")
+    parser.add_argument("-u", "--upload", nargs="?", const=CONFIG["capture_dir"], help="Upload PCAPNG(s) to WPA-SEC")
     parser.add_argument("-d", "--download", nargs="?", const=os.path.join(CONFIG["capture_dir"], "wpa-sec.potfile"),
                         help="Download potfile from WPA-SEC")
-    parser.add_argument("--set-key", type=str, help="Set the WPA-SEC API key in the database.")
-    parser.add_argument("--get-key", action="store_true", help="Retrieve the WPA-SEC API key from the database.")
-    parser.add_argument("--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
+
+    parser.add_argument("-sk", "--set-key", type=str, help="Set the WPA-SEC API key in the database.")
+    parser.add_argument("-gk", "--get-key", action="store_true", help="Retrieve the WPA-SEC API key from the database.")
+
+    parser.add_argument("-nw", "--no-webserver", action="store_true", help="Disable web server and run CLI-only operations.")
 
     args = parser.parse_args()
     logger.debug(f"Parsed arguments: {args}")
 
-    # **Ensure capture directory exists**
-    os.makedirs(CONFIG["capture_dir"], exist_ok=True)
-    logger.info(f"Capture directory ensured: {CONFIG['capture_dir']}")
 
-    # **Open a Single Database Connection**
+    # Open a Single Database Connection
     with get_db_connection() as db_conn:
         logger.info("Database connection established.")
 
-        # **Handle WPA-SEC related actions**
+        # Handle WPA-SEC related actions
         if wpa_sec.handle_wpa_sec_actions(args, db_conn):
             logger.info("Handled WPA-SEC related action. Exiting.")
             return
 
-        # **Handle parsing of an existing PCAP file**
-        if args.parse_existing:
-            logger.info(f"Parsing existing file: {args.parse_existing}")
-            scapy_parser.process_pcap(args.parse_existing, db_conn)
+        # Handle parsing of an existing PCAPNG with NMEA file optionally
+        if args.existing:
+            pcapng_file = args.existing[0]
+            nmea_file = args.existing[1] if len(args.existing) > 1 else None  # (if exists)
+
+            if not os.path.exists(pcapng_file):
+                logger.error(f"PCAPNG file not found: {pcapng_file}")
+                return
+
+            if nmea_file and not os.path.exists(nmea_file):
+                logger.error(f"NMEA file not found: {nmea_file}")
+                return
+
+            logger.info(f"Parsing existing PCAPNG file: {pcapng_file}")
+            if nmea_file:
+                logger.info(f"Parsing associated NMEA file: {nmea_file}")
+
+                # Process NMEA for GPS Data
+                gps_data = process_nmea(nmea_file)
+            else:
+                gps_data = None
+
+            # Pass GPS data (if available) to process_pcapng
+            scapy_parser.process_pcapng(pcapng_file, db_conn, gps_data=gps_data)
+
             logger.info("Parsing and storing complete.")
             return
 
-        # **Ensure an interface is provided for scanning**
-        if not args.interface:
-            logger.error("An interface must be specified for active or passive scanning modes.")
-            parser.error("An interface must be specified for active or passive scanning modes.")
+        # Start hcxdumptool scanning
+        if args.active or args.passive:
 
-        # **Define capture file path**
-        capture_file = os.path.join(CONFIG["capture_dir"], "wmap.pcapng")
-        logger.debug(f"Capture file path set to: {capture_file}")
+            # Ensure an interface is provided before scanning
+            if not args.interface:
+                logger.error("An interface must be specified for active or passive scanning modes.")
+                parser.error("An interface must be specified for active or passive scanning modes.")
 
-        # **Start hcxdumptool scanning**
-        if args.active:
-            hcxdumptool_cmd = f"hcxdumptool -i {args.interface} -o {capture_file}"
-            logger.info(f"Starting active scan with command: {hcxdumptool_cmd}")
+            # Ensure --gpsd is only used with --active or --passive
+            if args.gpsd and not (args.active or args.passive):
+                logger.error("--gpsd must be used with either --active or --passive.")
+                parser.error("--gpsd must be used with either --active or --passive.")
 
-        elif args.passive:
-            hcxdumptool_cmd = (
-                f"hcxdumptool -i {args.interface} -w {capture_file} "
-                f"--disable_deauthentication --disable_proberequest --disable_association --disable_reassociation"
-            )
-            logger.info(f"Starting passive scan with command: {hcxdumptool_cmd}")
+            # Generate current time formatted filenames
+            capture_file = generate_capture_filename()
+            gps_file = generate_nmea_filename() if args.gpsd else None
 
-        else:
-            logger.error("No scanning mode selected. Exiting.")
-            return
+            logger.debug(f"Capture file path set to: {capture_file}")
 
-        # **Execute the command**
-        process = subprocess.Popen(hcxdumptool_cmd, shell=True, preexec_fn=os.setsid)
+            if args.active:
+                hcxdumptool_cmd = f"hcxdumptool -i {args.interface} -o {capture_file}"
+                logger.info(f"Starting active scan with command: {hcxdumptool_cmd}")
 
-        # **Start Live Scanning & Parsing**
-        scapy_parser.live_scan(capture_file, db_conn, process)
+            elif args.passive:
+                hcxdumptool_cmd = (
+                    f"hcxdumptool -i {args.interface} -w {capture_file} "
+                    f"--disable_deauthentication --disable_proberequest --disable_association --disable_reassociation"
+                )
+                logger.info(f"Starting passive scan with command: {hcxdumptool_cmd}")
 
-        # **Start Web Server (if enabled)**
+            # Append GPSD option if enabled
+            if args.gpsd:
+                hcxdumptool_cmd += f" --gpsd --nmea_out={gps_file}"
+                logger.info(f"GPS logging enabled. hcxdumptool will generate {gps_file}.")
+
+            # Execute the command
+            process = subprocess.Popen(hcxdumptool_cmd, shell=True, preexec_fn=os.setsid)
+
+            # Fix permissions on capture and NMEA files immediately after creation
+            helpers.fix_permissions([capture_file])
+            if gps_file:
+                helpers.fix_permissions([gps_file])
+
+            # Start Live Scanning & Parsing
+            scapy_parser.live_scan(capture_file, db_conn, process, gps_file=gps_file)
+
+        # Start Web Server (if enabled)
         if not args.no_webserver:
             logger.info("Starting web server.")
-            pass
 
         logger.info("wmap application finished.")
 
