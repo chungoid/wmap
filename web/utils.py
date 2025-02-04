@@ -36,6 +36,7 @@ def load_queries(query_file):
 
     except Exception as e:
         raise ValueError(f"Unexpected error loading queries: {e}")
+
 def get_query_by_id(queries, query_id):
     """
     Retrieve a query by its ID.

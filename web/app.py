@@ -55,65 +55,69 @@ def emit_live_data():
     while True:
         web_logger.info("Fetching live AP and Client data...")
 
-        # Fetch APs and clients from the database
-        ap_query = "SELECT mac, ssid, encryption, signal_strength, last_seen, channel, extended_capabilities FROM access_points"
-        client_query = "SELECT mac, associated_ap, last_seen, signal_strength FROM clients"
+        # Query APs and Clients with manufacturer info
+        ap_query = """
+            SELECT mac, ssid, encryption, signal_strength, last_seen, channel, extended_capabilities, manufacturer
+            FROM access_points
+        """
+        client_query = """
+            SELECT mac, ssid, associated_ap, last_seen, signal_strength, manufacturer
+            FROM clients
+        """
 
         access_points = execute_query(ap_query)
         clients = execute_query(client_query)
 
-        # **Organize clients by their associated AP**
+        # Organize clients by AP using MAC and SSID
         client_mapping = {}
-        unassociated_clients = []  # Store unassociated clients separately
+        for client_mac, client_ssid, client_associated_ap, last_seen, signal_strength, client_manufacturer in clients:
+            # Use associated AP MAC if available, otherwise match by SSID
+            ap_key = client_associated_ap if client_associated_ap != "ff:ff:ff:ff:ff:ff" else client_ssid
 
-        for client in clients:
-            client_mac, associated_ap, last_seen, signal_strength = client
+            if ap_key not in client_mapping:
+                client_mapping[ap_key] = []
 
-            if associated_ap and associated_ap != "ff:ff:ff:ff:ff:ff":
-                if associated_ap not in client_mapping:
-                    client_mapping[associated_ap] = []
-                client_mapping[associated_ap].append({
-                    "mac": client_mac,
-                    "last_seen": last_seen,
-                    "signal_strength": signal_strength
-                })
-            else:
-                # **If the client is unassociated, store it separately**
-                unassociated_clients.append({
-                    "mac": client_mac,
-                    "last_seen": last_seen,
-                    "signal_strength": signal_strength
-                })
+            client_mapping[ap_key].append({
+                "mac": client_mac,
+                "ssid": client_ssid or "Unknown",
+                "manufacturer": client_manufacturer or "Unknown",
+                "last_seen": last_seen,
+                "signal_strength": signal_strength
+            })
 
-        # **Format AP data and attach associated clients**
+        # Format APs with their associated clients and manufacturer
         formatted_aps = []
         for ap in access_points:
-            mac, ssid, encryption, signal_strength, last_seen, channel, extended_capabilities = ap
+            mac, ssid, encryption, signal_strength, last_seen, channel, extended_capabilities, ap_manufacturer = ap
+
+            # Attach clients based on MAC or SSID match
+            attached_clients = client_mapping.get(mac, [])
+            if not attached_clients and ssid:
+                attached_clients = client_mapping.get(ssid, [])
+
             formatted_aps.append({
                 "mac": mac,
                 "ssid": ssid,
                 "encryption": encryption,
+                "manufacturer": ap_manufacturer or "Unknown",
                 "signal_strength": signal_strength,
                 "last_seen": last_seen,
                 "channel": channel,
                 "extended_capabilities": extended_capabilities,
-                "clients": client_mapping.get(mac, [])  # Attach clients correctly
+                "clients": attached_clients  # Attach matched clients
             })
 
-        # **Log emitted data**
+        # Log emitted data
         web_logger.debug(f"Emitting AP & Client Data: {formatted_aps}")
-        web_logger.debug(f"Emitting Unassociated Clients: {unassociated_clients}")
 
-        # **Emit data to the frontend**
+        # **Emit data to clients**
         socketio.emit("update_ap_client_data", formatted_aps)
-        socketio.emit("update_unassociated_clients", unassociated_clients)
 
         # **Use `socketio.sleep()` instead of `time.sleep()` to prevent blocking**
         socketio.sleep(5)
 
 # **Start emitting live data in a separate thread**
 threading.Thread(target=emit_live_data, daemon=True).start()
-
 
 @app.route("/run-query/<query_id>", methods=["GET"])
 def run_query(query_id):

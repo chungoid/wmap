@@ -14,13 +14,11 @@
                 updateAPTable(data);
             });
 
-            socket.on("update_unassociated_clients", function (data) {
-                updateUnassociatedClients(data);
-            });
-
             function updateAPTable(data) {
                 let tableBody = document.getElementById("apTableBody");
-                tableBody.innerHTML = "";
+                let unassociatedClients = [];
+
+                tableBody.innerHTML = ""; // Clear existing table
 
                 if (!Array.isArray(data) || data.length === 0) {
                     console.warn("No AP & Client data received.");
@@ -35,6 +33,7 @@
                         <td>${ap.mac}</td>
                         <td>${ap.ssid || "Hidden SSID"}</td>
                         <td>${ap.encryption || "Unknown"}</td>
+                        <td>${ap.manufacturer || "Unknown"}</td>
                         <td>${ap.signal_strength} dBm</td>
                         <td>${ap.last_seen}</td>
                         <td>${ap.channel}</td>
@@ -45,24 +44,35 @@
                             </button>
                             <ul id="clients-${ap.mac}" class="client-list" style="display:none;">
                                 ${clientCount > 0 ? ap.clients.map(client =>
-                                    `<li>${client.mac} - ${client.signal_strength} dBm (Last Seen: ${client.last_seen})</li>`).join("")
+                                    `<li>${client.mac} (${client.manufacturer}) - ${client.signal_strength} dBm (Last Seen: ${client.last_seen})</li>`).join("")
                                     : "<li>No Clients</li>"}
                             </ul>
                         </td>
                     `;
                     tableBody.appendChild(row);
                 });
+
+                // Handle Unassociated Clients
+                data.forEach(ap => {
+                    ap.clients.forEach(client => {
+                        if (client.associated_ap === "Unknown" || client.associated_ap === "ff:ff:ff:ff:ff:ff") {
+                            unassociatedClients.push(client);
+                        }
+                    });
+                });
+
+                updateUnassociatedClients(unassociatedClients);
             }
 
-            function updateUnassociatedClients(data) {
+            function updateUnassociatedClients(unassociatedClients) {
                 let unassociatedList = document.getElementById("unassociatedClientsList");
                 unassociatedList.innerHTML = "";
 
-                if (data.length > 0) {
+                if (unassociatedClients.length > 0) {
                     document.getElementById("unassociatedClientsSection").style.display = "block";
-                    data.forEach(client => {
+                    unassociatedClients.forEach(client => {
                         let listItem = document.createElement("li");
-                        listItem.innerHTML = `${client.mac} - ${client.signal_strength} dBm (Last Seen: ${client.last_seen})`;
+                        listItem.innerHTML = `${client.mac} (${client.manufacturer}) - ${client.signal_strength} dBm (Last Seen: ${client.last_seen})`;
                         unassociatedList.appendChild(listItem);
                     });
                 } else {
@@ -183,6 +193,7 @@
                 <th>MAC</th>
                 <th>SSID</th>
                 <th>Encryption</th>
+                <th>Manufacturer</th>
                 <th>Signal</th>
                 <th>Last Seen</th>
                 <th>Channel</th>
