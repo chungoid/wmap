@@ -219,12 +219,19 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
             device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
 
         # Process Clients
-        elif frame_type in ["probe_req", "auth", "assoc_req", "assoc_resp", "reassoc_req", "reassoc_resp", "disas", "deauth"]:
+        elif frame_type in ["probe_req", "auth", "assoc_req", "assoc_resp", "reassoc_req", "reassoc_resp", "disas",
+                            "deauth"]:
             logger.debug(f"Processing Client frame for {mac}.")
 
-            associated_ap = getattr(packet[Dot11], 'addr1', '').lower()
             ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
             manufacturer = get_manufacturer(mac, oui_mapping)
+
+            # Fix: Only update associated_ap if it's an `assoc_req` or `reassoc_req`
+            if frame_type in ["assoc_req", "reassoc_req"]:
+                associated_ap = packet[Dot11].addr1.lower()  # AP's MAC from association request
+            else:
+                associated_ap = device_dict.get(mac, {}).get('associated_ap',
+                                                             'ff:ff:ff:ff:ff:ff')  # Keep existing value
 
             # Insert or update client data
             if mac not in device_dict:
@@ -233,6 +240,9 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
                     'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'associated_ap': associated_ap,
                     'total_data': packet_length, 'frame_counts': {}
                 }
+
+            # Ensure `associated_ap` updates for existing clients on association
+            device_dict[mac]['associated_ap'] = associated_ap
 
             # Update frame counts for clients
             device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
