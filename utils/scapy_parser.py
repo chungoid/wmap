@@ -242,14 +242,15 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
             timestamp = packet.time  # Extract timestamp from packet
 
             # Find the closest timestamp safely
-            closest_timestamp = None
             if gps_data:
-                closest_timestamp = min(gps_data.keys(), key=lambda t: abs(t - timestamp), default=None)
-
-            if closest_timestamp is not None:
-                latitude, longitude = gps_data.get(closest_timestamp, (None, None))
+                valid_timestamps = [t for t in gps_data.keys() if t is not None]
+                if valid_timestamps:
+                    closest_timestamp = min(valid_timestamps, key=lambda t: abs(t - timestamp))
+                    latitude, longitude = gps_data.get(closest_timestamp, (None, None))
+                else:
+                    latitude, longitude = None, None
             else:
-                latitude, longitude = None, None  # Fallback if no GPS match found
+                latitude, longitude = None, None
 
             # Assign GPS coordinates to the device entry
             device_dict[mac]['latitude'] = latitude
@@ -276,8 +277,13 @@ def store_results_in_db(device_dict, db_conn):
 
         for mac, device_info in device_dict.items():
             try:
-                latitude = device_info.get("latitude")
-                longitude = device_info.get("longitude")
+                # Ensure latitude and longitude are stored as None or proper float values
+                latitude = device_info.get("latitude", None)
+                longitude = device_info.get("longitude", None)
+
+                # Ensure they're converted to NULL in SQL if None
+                if latitude is None or longitude is None:
+                    latitude, longitude = None, None  # Explicitly set to None for proper DB handling
 
                 if "associated_ap" in device_info:  # Client Table
                     cursor.execute("""
@@ -430,45 +436,31 @@ def get_manufacturer(mac, oui_mapping):
 
 
 def process_nmea(nmea_file):
-    """
-    Process an NMEA file and extract timestamped GPS coordinates.
-
-    Args:
-        nmea_file (str): Path to the .nmea file.
-
-    Returns:
-        dict: Dictionary mapping timestamps to GPS coordinates {timestamp: (latitude, longitude)}
-    """
+    """Process an NMEA file and extract timestamped GPS coordinates."""
     gps_data = {}
 
     try:
         with open(nmea_file, "r") as file:
             for line in file:
-                # Match NMEA sentences ($GPGGA or $GPRMC)
                 match = re.match(r"\$(GPGGA|GPRMC),([^*]+)", line)
                 if not match:
-                    continue  # Ignore non-GPS lines
+                    continue
 
                 sentence_type, data = match.groups()
                 fields = data.split(",")
 
                 if sentence_type == "GPGGA" and len(fields) >= 6:
                     time_raw, lat_raw, lat_dir, lon_raw, lon_dir = fields[:5]
-
                 elif sentence_type == "GPRMC" and len(fields) >= 7:
                     time_raw, lat_raw, lat_dir, lon_raw, lon_dir = fields[1:6]
-
                 else:
-                    continue  # Skip malformed data
+                    continue
 
-                # Convert GPS time to Unix timestamp
                 timestamp = convert_nmea_time(time_raw)
-
-                # Convert latitude and longitude to decimal degrees
                 latitude = convert_nmea_coordinates(lat_raw, lat_dir)
                 longitude = convert_nmea_coordinates(lon_raw, lon_dir)
 
-                if latitude is not None and longitude is not None:
+                if timestamp is not None and latitude is not None and longitude is not None:
                     gps_data[timestamp] = (latitude, longitude)
 
     except FileNotFoundError:
@@ -476,8 +468,8 @@ def process_nmea(nmea_file):
     except Exception as e:
         logger.error(f"Error processing NMEA file: {e}")
 
-    logger.debug(f"Processed GPS Data: {gps_data}")  # Debugging output
-    return gps_data if gps_data else {}  # **Ensure a valid dictionary is always returned**
+    logger.debug(f"Processed GPS Data: {gps_data}")
+    return gps_data if gps_data else {}
 
 
 def convert_nmea_time(nmea_time):
