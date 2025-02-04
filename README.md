@@ -68,10 +68,4 @@ Queries are defined in config/queries.yaml and can be customized or extended. Ex
 
 ## License
 
-This project is licensed under the MIT License. See the LICENSE file for details.
-Attribution
-
-This project makes use of the following third-party tools and libraries:
-
-    Scapy (BSD License): Used for parsing network traffic. Scapy License
-    hcxdumptool (GPL): Used for capturing WPA handshakes. hcxdumptool License
+This project is licensed under the GNU General Public License v2 (GPL v2). See the LICENSE file for details.
