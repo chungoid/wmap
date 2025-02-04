@@ -1,6 +1,5 @@
 import yaml
 import logging
-from config.config import CONFIG
 
 web_logger = logging.getLogger("web")
 web_logger.setLevel(logging.DEBUG)

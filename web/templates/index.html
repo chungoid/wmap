@@ -9,20 +9,18 @@
         document.addEventListener("DOMContentLoaded", function () {
             const socket = io();
 
-            // ** Debug WebSocket Connection **
-            socket.on("connect", function () {
-                console.log("Connected to WebSocket");
-            });
-
             socket.on("update_ap_client_data", function (data) {
                 console.log("Received AP & Client Data:", data);
                 updateAPTable(data);
             });
 
+            socket.on("update_unassociated_clients", function (data) {
+                updateUnassociatedClients(data);
+            });
+
             function updateAPTable(data) {
                 let tableBody = document.getElementById("apTableBody");
                 tableBody.innerHTML = "";
-                let unassociatedClients = [];
 
                 if (!Array.isArray(data) || data.length === 0) {
                     console.warn("No AP & Client data received.");
@@ -30,6 +28,8 @@
                 }
 
                 data.forEach(ap => {
+                    let clientCount = ap.clients ? ap.clients.length : 0;
+
                     let row = document.createElement("tr");
                     row.innerHTML = `
                         <td>${ap.mac}</td>
@@ -41,38 +41,32 @@
                         <td>${ap.extended_capabilities || "None"}</td>
                         <td>
                             <button onclick="toggleClients('${ap.mac}')">
-                                ${ap.clients.length} Clients
+                                ${clientCount} Clients
                             </button>
                             <ul id="clients-${ap.mac}" class="client-list" style="display:none;">
-                                ${ap.clients.length > 0 ? ap.clients.map(client =>
+                                ${clientCount > 0 ? ap.clients.map(client =>
                                     `<li>${client.mac} - ${client.signal_strength} dBm (Last Seen: ${client.last_seen})</li>`).join("")
                                     : "<li>No Clients</li>"}
                             </ul>
                         </td>
                     `;
                     tableBody.appendChild(row);
-
-                    // Collect unassociated clients
-                    ap.clients.forEach(client => {
-                        if (!client.associated_ap || client.associated_ap === "Unknown" || client.associated_ap === "ff:ff:ff:ff:ff:ff") {
-                            unassociatedClients.push(client);
-                        }
-                    });
                 });
+            }
 
-                if (unassociatedClients.length > 0) {
-                    let unassocRow = document.createElement("tr");
-                    unassocRow.innerHTML = `
-                        <td colspan="7"><strong>Unassociated Clients</strong></td>
-                        <td>
-                            <button onclick="toggleUnassociated()"> ${unassociatedClients.length} Clients</button>
-                            <ul id="unassociatedClientsList" class="client-list" style="display:none;">
-                                ${unassociatedClients.map(client =>
-                                    `<li>${client.mac} - ${client.signal_strength} dBm (Last Seen: ${client.last_seen})</li>`).join("")}
-                            </ul>
-                        </td>
-                    `;
-                    tableBody.appendChild(unassocRow);
+            function updateUnassociatedClients(data) {
+                let unassociatedList = document.getElementById("unassociatedClientsList");
+                unassociatedList.innerHTML = "";
+
+                if (data.length > 0) {
+                    document.getElementById("unassociatedClientsSection").style.display = "block";
+                    data.forEach(client => {
+                        let listItem = document.createElement("li");
+                        listItem.innerHTML = `${client.mac} - ${client.signal_strength} dBm (Last Seen: ${client.last_seen})`;
+                        unassociatedList.appendChild(listItem);
+                    });
+                } else {
+                    document.getElementById("unassociatedClientsSection").style.display = "none";
                 }
             }
 
@@ -172,6 +166,11 @@
             gap: 10px;
             justify-content: center;
         }
+        #unassociatedClientsSection {
+            display: none;
+            margin-top: 20px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -194,6 +193,10 @@
         <tbody id="apTableBody"></tbody>
     </table>
 
+    <!-- Unassociated Clients Section -->
+    <h2 id="unassociatedClientsSection">Unassociated Clients</h2>
+    <ul id="unassociatedClientsList"></ul>
+
     <h2>Run Query</h2>
     <div class="dropdown-container">
         <label for="queryDropdown">Select a Query:</label>
@@ -203,4 +206,3 @@
     <div id="queryResults"></div>
 </body>
 </html>
-

@@ -1,15 +1,11 @@
 import threading
-
-import eventlet
-eventlet.monkey_patch()
-
 import sys
 import os
 import logging
 import sqlite3
 from logging.handlers import RotatingFileHandler
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, send_from_directory
 from flask_socketio import SocketIO
 
 # **Fix Import Path Issues for `web.utils`**
@@ -59,25 +55,37 @@ def emit_live_data():
     while True:
         web_logger.info("Fetching live AP and Client data...")
 
+        # Fetch APs and clients from the database
         ap_query = "SELECT mac, ssid, encryption, signal_strength, last_seen, channel, extended_capabilities FROM access_points"
         client_query = "SELECT mac, associated_ap, last_seen, signal_strength FROM clients"
 
         access_points = execute_query(ap_query)
         clients = execute_query(client_query)
 
-        # Organize clients by associated AP
+        # **Organize clients by their associated AP**
         client_mapping = {}
+        unassociated_clients = []  # Store unassociated clients separately
+
         for client in clients:
             client_mac, associated_ap, last_seen, signal_strength = client
-            if associated_ap not in client_mapping:
-                client_mapping[associated_ap] = []
-            client_mapping[associated_ap].append({
-                "mac": client_mac,
-                "last_seen": last_seen,
-                "signal_strength": signal_strength
-            })
 
-        # Format APs with their associated clients
+            if associated_ap and associated_ap != "ff:ff:ff:ff:ff:ff":
+                if associated_ap not in client_mapping:
+                    client_mapping[associated_ap] = []
+                client_mapping[associated_ap].append({
+                    "mac": client_mac,
+                    "last_seen": last_seen,
+                    "signal_strength": signal_strength
+                })
+            else:
+                # **If the client is unassociated, store it separately**
+                unassociated_clients.append({
+                    "mac": client_mac,
+                    "last_seen": last_seen,
+                    "signal_strength": signal_strength
+                })
+
+        # **Format AP data and attach associated clients**
         formatted_aps = []
         for ap in access_points:
             mac, ssid, encryption, signal_strength, last_seen, channel, extended_capabilities = ap
@@ -89,14 +97,16 @@ def emit_live_data():
                 "last_seen": last_seen,
                 "channel": channel,
                 "extended_capabilities": extended_capabilities,
-                "clients": client_mapping.get(mac, [])  # Attach associated clients
+                "clients": client_mapping.get(mac, [])  # Attach clients correctly
             })
 
-        # Log emitted data
+        # **Log emitted data**
         web_logger.debug(f"Emitting AP & Client Data: {formatted_aps}")
+        web_logger.debug(f"Emitting Unassociated Clients: {unassociated_clients}")
 
-        # **Emit data to clients**
+        # **Emit data to the frontend**
         socketio.emit("update_ap_client_data", formatted_aps)
+        socketio.emit("update_unassociated_clients", unassociated_clients)
 
         # **Use `socketio.sleep()` instead of `time.sleep()` to prevent blocking**
         socketio.sleep(5)
@@ -104,13 +114,6 @@ def emit_live_data():
 # **Start emitting live data in a separate thread**
 threading.Thread(target=emit_live_data, daemon=True).start()
 
-
-# **Serve Homepage**
-@app.route("/")
-def home():
-    """Serve the main HTML page."""
-    web_logger.info("Serving homepage index.html")
-    return render_template("index.html")  # Ensure index.html exists in `templates/`
 
 @app.route("/run-query/<query_id>", methods=["GET"])
 def run_query(query_id):
@@ -156,6 +159,16 @@ def list_queries():
     web_logger.debug(f"Structured Queries Sent: {structured_queries}")
 
     return jsonify(structured_queries)
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory("static", filename)
+
+@app.route("/")
+def home():
+    """Serve the main HTML page."""
+    web_logger.info("Serving homepage index.html")
+    return render_template("index.html")
 
 if __name__ == "__main__":
     # Detect if running as a detached subprocess (no interactive terminal)
