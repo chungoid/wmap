@@ -24,6 +24,7 @@ example:
     sudo python3 wmap -g -a wlan0 
     sudo python3 wmap -u
     sudo python3 wmap -d
+    
 
 usage: wmap [-h] [-a] [-p] [-g] [-e PCAPNG_FILE [NMEA_FILE ...]] [-u [UPLOAD]] [-d [DOWNLOAD]] [-sk SET_KEY] [-gk] [-nw] [interface]
 
@@ -66,20 +67,11 @@ Queries are defined in config/queries.yaml and can be customized or extended. Ex
 ```
 ## Features
 
-    Parses captured data using Scapy (default).
+    Parses captured data using Scapy.
     Stores parsed data in a SQLite database for further analysis.
     Uploads and downloads data with WPA-SEC integration.
     Extensible YAML-configured SQL queries in wmap/config/queries.yaml.
     Flask-based web server for interactive query visualization.
-
-## Directory Structure
-
-    config/: Configuration files for the project.
-    database/: Contains the SQLite database for parsed data.
-    capture/: Stores captured PCAP files.
-    logs/: Logs for various components.
-    utils/: Utility modules for handling captures, parsing, and WPA-SEC integration.
-    web/: Flask-based web application for viewing and querying data.
 
 ## License
 
