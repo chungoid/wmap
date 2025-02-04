@@ -129,7 +129,7 @@ def main():
             logger.debug(f"Capture file path set to: {capture_file}")
 
             if args.active:
-                hcxdumptool_cmd = f"hcxdumptool -i {args.interface} -o {capture_file}"
+                hcxdumptool_cmd = f"hcxdumptool -i {args.interface} -w {capture_file}"
                 logger.info(f"Starting active scan with command: {hcxdumptool_cmd}")
 
             elif args.passive:
