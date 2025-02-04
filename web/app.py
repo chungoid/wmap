@@ -1,10 +1,12 @@
+import eventlet
+eventlet.monkey_patch()
+
 import sys
 import os
 import logging
-import threading
 import sqlite3
-import time
 from logging.handlers import RotatingFileHandler
+
 from flask import Flask, jsonify, render_template
 from flask_socketio import SocketIO
 
@@ -88,14 +90,22 @@ def emit_live_data():
                 "clients": client_mapping.get(mac, [])  # Attach associated clients
             })
 
-        # Log emitted data
-        web_logger.debug(f"Emitting AP & Client Data: {formatted_aps}")
+        # Log structured data before emitting
+        web_logger.debug(f"Formatted AP Data for Emission: {formatted_aps}")
 
+        # Log if GPS data exists (Check if table has `latitude` and `longitude`)
+        gps_query = "SELECT latitude, longitude FROM access_points WHERE latitude IS NOT NULL AND longitude IS NOT NULL"
+        gps_results = execute_query(gps_query)
+        if gps_results:
+            web_logger.info(f"GPS Data Found: {gps_results}")
+        else:
+            web_logger.warning("No GPS Data Found in access_points.")
+
+        # Emit updates (without `broadcast=True`)
         socketio.emit("update_ap_client_data", formatted_aps)
-        time.sleep(5)  # Refresh every 5 seconds
 
-# Start emitting live data in a separate thread
-threading.Thread(target=emit_live_data, daemon=True).start()
+        eventlet.sleep(5)  # Non-blocking sleep, prevents hcxdumptool from stalling updates
+
 
 # **Serve Homepage**
 @app.route("/")
@@ -126,25 +136,28 @@ queries_by_category = load_queries(QUERY_FILE)
 
 @app.route("/available-queries", methods=["GET"])
 def list_queries():
-    """Return available queries categorized properly."""
+    """Return available queries."""
     web_logger.info("Listing all available queries...")
 
-    if not queries or "categories" not in queries:
-        web_logger.warning("No queries found or 'categories' key missing in queries.yaml.")
+    if not queries:
+        web_logger.warning("No queries found in queries.yaml.")
         return jsonify({"error": "No queries available."}), 500
 
-    # **Extract all queries under their categories**
-    structured_queries = []
-    for category in queries["categories"]:
-        category_name = category.get("name", "Uncategorized")
-        if "queries" in category:
-            structured_queries.append({
-                "category": category_name,
-                "queries": [{"id": q["id"], "description": q["description"]} for q in category["queries"]]
-            })
+    structured_queries = [
+        {
+            "category": category["name"],
+            "queries": [
+                {"id": query["id"], "description": query["description"]}
+                for query in category["queries"]
+            ]
+        }
+        for category in queries["categories"]
+    ]
 
+    # Log queries before sending
     web_logger.debug(f"Structured Queries Sent: {structured_queries}")
-    return jsonify(structured_queries)  # Return queries properly categorized
+
+    return jsonify(structured_queries)
 
 if __name__ == "__main__":
     # Detect if running as a detached subprocess (no interactive terminal)
