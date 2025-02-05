@@ -226,26 +226,26 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
             ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
             manufacturer = get_manufacturer(mac, oui_mapping)
 
-            # Fix: Only update associated_ap if it's an `assoc_req` or `reassoc_req`
-            if frame_type in ["assoc_req", "reassoc_req"]:
-                associated_ap = packet[Dot11].addr1.lower()  # AP's MAC from association request
-            else:
-                associated_ap = device_dict.get(mac, {}).get('associated_ap',
-                                                             'ff:ff:ff:ff:ff:ff')  # Keep existing value
+            if frame_type in ["auth", "assoc_req", "reassoc_req"]:
+                logger.debug(f"Processing Association Frame: {frame_type} for Client {mac}")
 
-            # Insert or update client data
-            if mac not in device_dict:
-                device_dict[mac] = {
-                    'mac': mac, 'ssid': ssid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'associated_ap': associated_ap,
-                    'total_data': packet_length, 'frame_counts': {}
-                }
+                associated_ap = getattr(packet[Dot11], 'addr2', '').lower()  # AP is addr2 (source)
+                ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
+                manufacturer = get_manufacturer(mac, oui_mapping)
 
-            # Ensure `associated_ap` updates for existing clients on association
-            device_dict[mac]['associated_ap'] = associated_ap
+                if associated_ap == "ff:ff:ff:ff:ff:ff" or not associated_ap:
+                    logger.warning(f"Invalid AP MAC detected in {frame_type} for {mac}.")
 
-            # Update frame counts for clients
-            device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
+                # Insert or update client data
+                if mac not in device_dict:
+                    device_dict[mac] = {
+                        'mac': mac, 'ssid': ssid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'manufacturer': manufacturer, 'signal_strength': dbm_signal,
+                        'associated_ap': associated_ap, 'total_data': packet_length, 'frame_counts': {}
+                    }
+
+                # Increment frame counts
+                device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
 
         # GPS Data Matching (if Available)
         if gps_data and len(gps_data) > 0:
