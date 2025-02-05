@@ -219,33 +219,36 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
             device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
 
         # Process Clients
-        elif frame_type in ["probe_req", "auth", "assoc_req", "assoc_resp", "reassoc_req", "reassoc_resp", "disas",
-                            "deauth"]:
-            logger.debug(f"Processing Client frame for {mac}.")
+        elif frame_type in ["probe_req", "auth", "assoc_req", "reassoc_req"]:
+            logger.debug(f"Processing Client frame for {mac}. Frame Type: {frame_type}")
+
+            # Extract the AP's MAC address properly
+            associated_ap = None
+            if frame_type in ["auth", "assoc_req", "reassoc_req"]:
+                associated_ap = getattr(packet[Dot11], 'addr1', '').lower()  # AP's MAC should be in addr1
 
             ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
             manufacturer = get_manufacturer(mac, oui_mapping)
 
-            if frame_type in ["auth", "assoc_req", "reassoc_req"]:
-                logger.debug(f"Processing Association Frame: {frame_type} for Client {mac}")
+            # Log valid associations for debugging
+            if associated_ap and associated_ap != "ff:ff:ff:ff:ff:ff":
+                logger.debug(f"Client {mac} associated with AP {associated_ap}")
 
-                associated_ap = getattr(packet[Dot11], 'addr2', '').lower()  # AP is addr2 (source)
-                ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
-                manufacturer = get_manufacturer(mac, oui_mapping)
+            # Insert or update client data
+            if mac not in device_dict:
+                device_dict[mac] = {
+                    'mac': mac, 'ssid': ssid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'manufacturer': manufacturer, 'signal_strength': dbm_signal,
+                    'associated_ap': associated_ap,  # No defaults to ff:ff:ff:ff:ff:ff
+                    'total_data': packet_length, 'frame_counts': {}
+                }
+            else:
+                # Only update associated_ap if it's a valid MAC (not None, not ff:ff:ff:ff:ff:ff)
+                if associated_ap and associated_ap != "ff:ff:ff:ff:ff:ff":
+                    device_dict[mac]['associated_ap'] = associated_ap
 
-                if associated_ap == "ff:ff:ff:ff:ff:ff" or not associated_ap:
-                    logger.warning(f"Invalid AP MAC detected in {frame_type} for {mac}.")
-
-                # Insert or update client data
-                if mac not in device_dict:
-                    device_dict[mac] = {
-                        'mac': mac, 'ssid': ssid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        'manufacturer': manufacturer, 'signal_strength': dbm_signal,
-                        'associated_ap': associated_ap, 'total_data': packet_length, 'frame_counts': {}
-                    }
-
-                # Increment frame counts
-                device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
+            # Update frame counts
+            device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
 
         # GPS Data Matching (if Available)
         if gps_data and len(gps_data) > 0:
