@@ -18,7 +18,7 @@ def initialize():
         logger = logging.getLogger("wmap")
 
         # **Set wmap logger to INFO mode**
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
 
         logger.info("Logger initialized.")
 

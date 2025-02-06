@@ -13,7 +13,7 @@ CONFIG = {
     "capture_dir": os.path.join(BASE_DIR, "capture"),
     "web_dir": os.path.join(BASE_DIR, "web"),
     "config_dir": os.path.join(BASE_DIR, "config"),
-#    "test_dir": os.path.join(BASE_DIR, "tests"),
+    "test_dir": os.path.join(BASE_DIR, "tests")
 }
 
 # Default Paths
@@ -27,7 +27,7 @@ WEB_SERVER_PATH = os.path.join(CONFIG["web_dir"], "app.py")
 LOG_FILES = {
     "wmap": os.path.join(CONFIG["log_dir"], "wmap.log"),
     "web": os.path.join(CONFIG["log_dir"], "web.log"),
-#    "test": os.path.join(CONFIG["log_dir"], "test.log")
+    "test": os.path.join(CONFIG["log_dir"], "test.log")
 }
 
 
@@ -50,7 +50,7 @@ def setup_logging():
 
         # Prevent adding duplicate handlers
         if not logger.hasHandlers():
-            handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3)
+            handler = RotatingFileHandler(log_file, maxBytes=25 * 1024 * 1024, backupCount=3)
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
             logger.addHandler(handler)

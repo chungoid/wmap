@@ -8,10 +8,11 @@ import json
 
 from datetime import datetime
 from scapy.error import Scapy_Exception
+from scapy.layers.eap import EAPOL
 from scapy.utils import PcapReader
 from scapy.layers.dot11 import (
     Dot11, Dot11Beacon, Dot11Auth, Dot11Elt, Dot11ProbeReq, Dot11AssoReq,
-    Dot11ProbeResp, RadioTap, Dot11Deauth, Dot11AssoResp, Dot11ReassoReq, Dot11ReassoResp, Dot11Disas
+    Dot11ProbeResp, RadioTap, Dot11Deauth, Dot11AssoResp, Dot11ReassoReq, Dot11ReassoResp, Dot11Disas, Dot11QoS
 )
 
 from config.config import DEFAULT_OUI_PATH
@@ -91,7 +92,7 @@ def process_pcapng(pcap_file, db_conn, gps_data=None):
         gps_data (dict, optional): GPS timestamp-to-coordinates mapping from NMEA.
 
     """
-    device_dict = {}  # Initialize a dictionary to track detected devices
+    device_dict = {}  # Tracks detected devices (both APs & clients)
     oui_mapping = parse_oui_file()  # Load OUI file for MAC-to-manufacturer mapping
 
     try:
@@ -105,9 +106,18 @@ def process_pcapng(pcap_file, db_conn, gps_data=None):
                     logger.warning(f"Skipped corrupted packet: {e}")
                     continue  # Skip invalid packets
 
+        # **🔍 Log Clients Referencing Missing APs Before Storing Data**
+        ap_macs = {ap["mac"] for ap in device_dict.values() if "mac" in ap}  # Extract all AP MACs
+
+        for client_mac, client_data in device_dict.items():
+            associated_ap = client_data.get("associated_ap")
+            if associated_ap and associated_ap not in ap_macs:
+                logger.warning(f"Client {client_mac} references missing AP {associated_ap}. It may not have been captured in beacons/probe responses.")
+
         # **Store final results in the database**
-        logger.debug(f"Device dictionary after processing: {device_dict}")
+        logger.debug(f"Final Device Dictionary Before Storing: {device_dict}")
         store_results_in_db(device_dict, db_conn)
+
         logger.info("PCAP processing complete.")
 
     except FileNotFoundError:
@@ -117,163 +127,171 @@ def process_pcapng(pcap_file, db_conn, gps_data=None):
 
 
 def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
-    """Parse a packet and extract APs, clients, and optionally GPS latitude/longitude, with WPS & Extended Capabilities."""
+    """Parse a packet and extract APs, clients, GPS latitude/longitude, WPS, and Extended Capabilities."""
     try:
-        if not packet.haslayer(Dot11):
-            return  # Skip non-802.11 packets
+        # **Skip Broadcast MAC Address (`ff:ff:ff:ff:ff:ff`)**
+        mac = getattr(packet[Dot11], 'addr2', '').lower()
+        if mac == "ff:ff:ff:ff:ff:ff":
+            return
 
-        frame_type = None
+        # **Skip Non-802.11 Packets**
+        if not packet.haslayer(Dot11):
+            return
+
         packet_length = len(packet)
         dbm_signal = getattr(packet[RadioTap], 'dBm_AntSignal', None) if packet.haslayer(RadioTap) else None
 
-        mac = getattr(packet[Dot11], 'addr2', '').lower()
-        if not mac:
-            return  # Skip if MAC is missing
+        # **Determine 802.11 Frame Type and Subtype**
+        frame_type = None
+        dot11_layer = packet[Dot11]
 
-        # Determine the frame subtype
-        if packet.haslayer(Dot11Beacon):
-            frame_type = "beacon"
-        elif packet.haslayer(Dot11ProbeResp):
-            frame_type = "probe_resp"
-        elif packet.haslayer(Dot11ProbeReq):
-            frame_type = "probe_req"
-        elif packet.haslayer(Dot11Auth):
-            frame_type = "auth"
-        elif packet.haslayer(Dot11AssoReq):
-            frame_type = "assoc_req"
-        elif packet.haslayer(Dot11AssoResp):
-            frame_type = "assoc_resp"
-        elif packet.haslayer(Dot11ReassoReq):
-            frame_type = "reassoc_req"
-        elif packet.haslayer(Dot11ReassoResp):
-            frame_type = "reassoc_resp"
-        elif packet.haslayer(Dot11Disas):
-            frame_type = "disas"
-        elif packet.haslayer(Dot11Deauth):
-            frame_type = "deauth"
+        if dot11_layer.type == 0:  # **Management Frames**
+            subtype_map = {
+                0: "assoc_req",
+                1: "assoc_resp",
+                2: "reassoc_req",
+                3: "reassoc_resp",
+                4: "probe_req",
+                5: "probe_resp",
+                8: "beacon",
+                10: "disas",
+                11: "auth",
+                12: "deauth"
+            }
+            frame_type = subtype_map.get(dot11_layer.subtype, "mgmt_unknown")
 
-        # Process Access Points
-        if packet.haslayer(Dot11Beacon) or packet.haslayer(Dot11ProbeResp):
-            logger.debug(f"Processing AP frame (Beacon or Probe Response) for {mac}.")
+        elif dot11_layer.type == 1:  # **Control Frames**
+            subtype_map = {
+                9: "block_ack",
+                10: "block_ack_req",
+                11: "rts",
+                12: "cts",
+                13: "ack",
+                14: "cf_end",
+                15: "cf_end_ack"
+            }
+            frame_type = subtype_map.get(dot11_layer.subtype, "ctrl_unknown")
 
-            ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
+        elif dot11_layer.type == 2:  # **Data Frames**
+            frame_type = "data"
+
+        # **Process Access Points**
+        if frame_type in ["beacon", "probe_resp", "assoc_resp", "reassoc_resp"]:
+            ssid = packet[Dot11Elt].info.decode(errors="ignore") if packet.haslayer(Dot11Elt) else ""
             stats = packet[Dot11Beacon].network_stats() if packet.haslayer(Dot11Beacon) else {}
-            channel = stats.get('channel', 0)
-            crypto = stats.get('crypto', 'None')
-
-            # Ensure encryption is stored as a string instead of a set
+            channel = stats.get("channel", 0) if "channel" in stats else 0
+            crypto = stats.get("crypto", "None")
             if isinstance(crypto, set):
-                crypto = ", ".join(crypto)  # Convert set to string
-
+                crypto = ", ".join(crypto)
             manufacturer = get_manufacturer(mac, oui_mapping)
 
-            # Detect WPS Before Parsing Extended Capabilities
-            wps_info = None
+            # **Extract Extended Capabilities & WPS Info**
             extended_capabilities = "No Extended Capabilities"
+            wps_info = parse_wps_info(packet)
 
             if packet.haslayer(Dot11Elt):
-                elt = packet[Dot11Elt]
-                while isinstance(elt, Dot11Elt):
-                    if elt.ID == 221:  # Vendor-Specific IE (0xDD) - Check for WPS
-                        vendor_data = elt.info
-                        if vendor_data[:3] == b'\x00\x50\xF2' and vendor_data[3] == 0x04:  # WPS OUI + Type 0x04
-                            try:
-                                wps_config_methods = int.from_bytes(vendor_data[8:10], 'big') if len(vendor_data) > 9 else None
-                                config_methods = []
-                                if wps_config_methods:
-                                    if wps_config_methods & 0x0100:
-                                        config_methods.append("PIN Mode (Pixie Dust Vulnerable)")
-                                    if wps_config_methods & 0x0800:
-                                        config_methods.append("Virtual Display")
-                                if config_methods:
-                                    wps_info = ", ".join(config_methods)
-                            except Exception as e:
-                                logger.error(f"Failed to extract WPS details for {mac}: {e}")
+                try:
+                    extended_capabilities = decode_extended_capabilities(packet[Dot11Elt].info.hex())
+                except Exception as e:
+                    logger.error(f"Failed to process extended capabilities: {e}")
 
-                    elif elt.ID == 127:  # Extended Capabilities Tag
-                        try:
-                            hex_data = elt.info.hex()
-                            if len(hex_data) > 2:
-                                extended_capabilities = decode_extended_capabilities(hex_data)
-                        except Exception as e:
-                            logger.error(f"Failed to process extended capabilities for {mac}: {e}")
-                            extended_capabilities = "No Extended Capabilities"
-                    elt = elt.payload
-
+            # **Combine WPS Info & Extended Capabilities**
             if wps_info:
                 extended_capabilities = (
                     f"{extended_capabilities}, {wps_info}" if extended_capabilities != "No Extended Capabilities" else wps_info
                 )
 
-            # Ensure AP exists in device_dict
+            # **Ensure device is not classified as a client**
+            if mac in device_dict and "associated_ap" in device_dict[mac]:
+                logger.warning(f"MAC {mac} was previously a client but is now an AP. Updating classification.")
+                del device_dict[mac]["associated_ap"]
+
+            # **Ensure AP Exists & Update Channel**
             if mac not in device_dict:
                 device_dict[mac] = {
-                    'mac': mac, 'ssid': ssid, 'encryption': crypto,
-                    'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'manufacturer': manufacturer, 'signal_strength': dbm_signal, 'channel': channel,
-                    'extended_capabilities': extended_capabilities, 'clients': [], 'total_data': packet_length,
-                    'frame_counts': {}
+                    "mac": mac, "ssid": ssid, "encryption": crypto,
+                    "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "manufacturer": manufacturer, "signal_strength": dbm_signal, "channel": channel,
+                    "extended_capabilities": extended_capabilities, "frame_counts": {}
                 }
+            else:
+                if channel > 0:
+                    device_dict[mac]["channel"] = channel  # Ensure channel updates correctly
 
-            # Update frame counts for AP
-            device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
+            device_dict[mac]["frame_counts"][frame_type] = device_dict[mac]["frame_counts"].get(frame_type, 0) + 1
 
-        # Process Clients
-        elif frame_type in ["probe_req", "auth", "assoc_req", "reassoc_req"]:
-            logger.debug(f"Processing Client frame for {mac}. Frame Type: {frame_type}")
-
-            # Extract the AP's MAC address properly
-            associated_ap = None
-            if frame_type in ["auth", "assoc_req", "reassoc_req"]:
-                associated_ap = getattr(packet[Dot11], 'addr1', '').lower()  # AP's MAC should be in addr1
-
-            ssid = packet[Dot11Elt].info.decode(errors='ignore') if packet.haslayer(Dot11Elt) else ''
+        # **Process Clients**
+        elif frame_type in ["probe_req", "auth", "assoc_req", "reassoc_req", "data"]:
+            associated_ap = getattr(packet[Dot11], "addr1", "").lower() if frame_type in ["auth", "assoc_req",
+                                                                                          "reassoc_req"] else None
             manufacturer = get_manufacturer(mac, oui_mapping)
 
-            # Log valid associations for debugging
-            if associated_ap and associated_ap != "ff:ff:ff:ff:ff:ff":
-                logger.debug(f"Client {mac} associated with AP {associated_ap}")
+            # **Extract SSID for Probe Requests & Association Requests**
+            ssid = ""
+            if frame_type in ["probe_req", "assoc_req", "reassoc_req"] and packet.haslayer(Dot11Elt):
+                try:
+                    ssid = packet[Dot11Elt].info.decode(errors="ignore")
+                except Exception:
+                    ssid = "Unknown"
 
-            # Insert or update client data
+            # **Ensure MAC was not previously classified as an AP**
+            if mac in device_dict and "frame_counts" in device_dict[mac] and (
+                    "beacon" in device_dict[mac]["frame_counts"] or "probe_resp" in device_dict[mac]["frame_counts"]):
+                logger.warning(f"Skipping client entry for {mac}, already classified as an AP.")
+                return
+
+            # **Update Client Entry**
             if mac not in device_dict:
                 device_dict[mac] = {
-                    'mac': mac, 'ssid': ssid, 'last_seen': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'manufacturer': manufacturer, 'signal_strength': dbm_signal,
-                    'associated_ap': associated_ap,  # No defaults to ff:ff:ff:ff:ff:ff
-                    'total_data': packet_length, 'frame_counts': {}
+                    "mac": mac, "ssid": ssid, "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "manufacturer": manufacturer, "signal_strength": dbm_signal,
+                    "associated_ap": associated_ap, "total_data": packet_length, "frame_counts": {}
                 }
             else:
-                # Only update associated_ap if it's a valid MAC (not None, not ff:ff:ff:ff:ff:ff)
                 if associated_ap and associated_ap != "ff:ff:ff:ff:ff:ff":
-                    device_dict[mac]['associated_ap'] = associated_ap
+                    device_dict[mac]["associated_ap"] = associated_ap
+                if ssid:  # Only update SSID if we extracted a non-empty value
+                    device_dict[mac]["ssid"] = ssid
 
-            # Update frame counts
-            device_dict[mac]['frame_counts'][frame_type] = device_dict[mac]['frame_counts'].get(frame_type, 0) + 1
+            device_dict[mac]["frame_counts"][frame_type] = device_dict[mac]["frame_counts"].get(frame_type, 0) + 1
 
-        # GPS Data Matching (if Available)
-        if gps_data and len(gps_data) > 0:
-            timestamp = packet.time  # Extract timestamp from packet
+        # **Process EAPOL Frames Last (with Spoofing Check)**
+        if packet.haslayer(EAPOL):
+            eapol_source = getattr(packet, "addr2", "").lower()
+            eapol_dest = getattr(packet, "addr1", "").lower()
 
-            # Find the closest timestamp safely
-            if gps_data:
-                valid_timestamps = [t for t in gps_data.keys() if t is not None]
-                if valid_timestamps:
-                    closest_timestamp = min(valid_timestamps, key=lambda t: abs(t - timestamp))
-                    latitude, longitude = gps_data.get(closest_timestamp, (None, None))
-                else:
-                    latitude, longitude = None, None
+            # **Detect and Ignore Spoofed MACs in EAPOL**
+            tx_flags = getattr(packet[RadioTap], "tx_flags", None) if packet.haslayer(RadioTap) and hasattr(packet[RadioTap], "tx_flags") else None
+            is_spoofed = (tx_flags == 0x0018) and (dbm_signal is None or dbm_signal == -100)
+            if is_spoofed:
+                logger.warning(f"Skipping spoofed EAPOL packet from {eapol_source} -> {eapol_dest} (TX Flag 0x0018 detected)")
+                return
+
+            # **Ensure EAPOL destination is not incorrectly classified as a client**
+            if eapol_dest in device_dict and "associated_ap" in device_dict[eapol_dest]:
+                del device_dict[eapol_dest]["associated_ap"]
+
+            if eapol_source not in device_dict:
+                device_dict[eapol_source] = {
+                    "mac": eapol_source, "ssid": "",
+                    "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "manufacturer": get_manufacturer(eapol_source, oui_mapping),
+                    "associated_ap": eapol_dest, "signal_strength": dbm_signal,
+                    "channel": 0, "frame_counts": {"eapol": 1}
+                }
             else:
-                latitude, longitude = None, None
+                device_dict[eapol_source]["associated_ap"] = eapol_dest
+                device_dict[eapol_source]["frame_counts"]["eapol"] = device_dict[eapol_source]["frame_counts"].get("eapol", 0) + 1
 
-            # Assign GPS coordinates to the device entry
-            device_dict[mac]['latitude'] = latitude
-            device_dict[mac]['longitude'] = longitude
+        # **Assign GPS Data if Available**
+        if gps_data and mac in device_dict:
+            timestamp = packet.time
+            closest_timestamp = min(gps_data.keys(), key=lambda t: abs(t - timestamp))
+            latitude, longitude = gps_data.get(closest_timestamp, (None, None))
+            device_dict[mac]["latitude"] = latitude
+            device_dict[mac]["longitude"] = longitude
 
-        # Debugging Device Dictionary Before Storing
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Device Dictionary Before Storing:\n{json.dumps(device_dict, indent=4)}")
-
-        # Pass Device Dictionary to Database Storage
+        # **Store in Database**
         store_results_in_db(device_dict, db_conn)
 
     except Exception as e:
@@ -283,7 +301,9 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
 def store_results_in_db(device_dict, db_conn):
     """Store parsed results into the database and retain frame_counts."""
 
-    logger.debug(f"Parsed Device Dictionary Before DB Insert:\n{json.dumps(device_dict, indent=4)}")
+    if db_conn is None:  # Directly check if connection is missing
+        logger.error("No database connection provided to `store_results_in_db()`. Skipping DB insert.")
+        return
 
     try:
         cursor = db_conn.cursor()
@@ -345,8 +365,6 @@ def store_results_in_db(device_dict, db_conn):
                           device_info.get('extended_capabilities', 'None'), device_info.get('total_data', 0),
                           json.dumps(device_info.get("frame_counts", {})), latitude, longitude))
 
-                    logger.debug(f"Access Point inserted into database: {mac}")
-
             except Exception as e:
                 logger.error(f"Error inserting {mac} into database: {e}")
 
@@ -407,6 +425,32 @@ def decode_extended_capabilities(data):
     except Exception as e:
         logger.error(f"Failed to decode extended capabilities: {data} - {e}")
         return "No Extended Capabilities"
+
+def parse_wps_info(packet):
+    """Extract WPS configuration methods from a Dot11Elt layer."""
+    wps_info = None
+
+    if packet.haslayer(Dot11Elt):
+        elt = packet[Dot11Elt]
+        while isinstance(elt, Dot11Elt):
+            if elt.ID == 221:  # Vendor-Specific IE (0xDD) - Check for WPS
+                vendor_data = elt.info
+                if vendor_data[:3] == b'\x00\x50\xF2' and vendor_data[3] == 0x04:  # WPS OUI + Type 0x04
+                    try:
+                        wps_config_methods = int.from_bytes(vendor_data[8:10], "big") if len(vendor_data) > 9 else None
+                        config_methods = []
+                        if wps_config_methods:
+                            if wps_config_methods & 0x0100:
+                                config_methods.append("PIN Mode (Pixie Dust Vulnerable)")
+                            if wps_config_methods & 0x0800:
+                                config_methods.append("Virtual Display")
+                        if config_methods:
+                            wps_info = ", ".join(config_methods)
+                    except Exception as e:
+                        logger.error(f"Failed to extract WPS details: {e}")
+            elt = elt.payload  # Move to the next IE
+
+    return wps_info
 
 
 def parse_oui_file():
