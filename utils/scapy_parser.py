@@ -23,8 +23,8 @@ def live_scan(capture_file, db_conn, process, gps_file=None):
     """Live scan parsing that continuously reads from the capture file."""
     logger.info(f"Starting live parsing on: {capture_file}")
 
-    device_dict = {}  # Ensure persistent tracking of detected devices**
-    oui_mapping = parse_oui_file()  # Load OUI mapping once at the start
+    device_dict = {}  # Ensure persistent tracking of detected devices
+    oui_mapping = parse_oui_file()  # Load OUI mapping
 
     gps_data = None  # Initialize GPS data
 
@@ -105,7 +105,7 @@ def process_pcapng(pcap_file, db_conn, gps_data=None):
                     logger.warning(f"Skipped corrupted packet: {e}")
                     continue  # Skip invalid packets
 
-        # **🔍 Log Clients Referencing Missing APs Before Storing Data**
+        # Log Clients Referencing Missing APs Before Storing Data
         ap_macs = {ap["mac"] for ap in device_dict.values() if "mac" in ap}  # Extract all AP MACs
 
         for client_mac, client_data in device_dict.items():
@@ -372,15 +372,15 @@ def decode_extended_capabilities(data):
         capabilities_bytes = bytes.fromhex(data)
         features = []
 
-        # ** Management Frame Protection (MFP) - Byte 1, Bit 2**
+        # Management Frame Protection (MFP) - Byte 1, Bit 2
         if len(capabilities_bytes) > 1 and not (capabilities_bytes[1] & (1 << 2)):
             features.append("No Management Frame Protection")
 
-        # ** BSS Transition (802.11v) - Byte 0, Bit 6**
+        # BSS Transition (802.11v) - Byte 0, Bit 6
         if len(capabilities_bytes) > 0 and (capabilities_bytes[0] & (1 << 6)):
             features.append("BSS Transition Enabled")
 
-        # ** TDLS Support - Byte 3, Bits 0-2**
+        # TDLS Support - Byte 3, Bits 0-2
         if len(capabilities_bytes) > 3:
             if capabilities_bytes[3] & (1 << 0):
                 features.append("TDLS Supported")
@@ -389,15 +389,15 @@ def decode_extended_capabilities(data):
             if capabilities_bytes[3] & (1 << 2):
                 features.append("TDLS Channel Switching Allowed")
 
-        # ** Opportunistic Key Caching (OKC) - Byte 4, Bit 0**
+        # Opportunistic Key Caching (OKC) - Byte 4, Bit 0
         if len(capabilities_bytes) > 4 and (capabilities_bytes[4] & (1 << 0)):
             features.append("Opportunistic Key Caching Enabled")
 
-        # ** Extended Channel Switching - Byte 0, Bit 0**
+        # Extended Channel Switching - Byte 0, Bit 0
         if len(capabilities_bytes) > 0 and (capabilities_bytes[0] & (1 << 0)):
             features.append("Extended Channel Switching Enabled")
 
-        # ** Wi-Fi Protected Setup (WPS) Detection**
+        # Wi-Fi Protected Setup (WPS) Detection
         if "WPS" in data:
             features.append("WPS Enabled")
 
