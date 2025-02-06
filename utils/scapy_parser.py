@@ -128,53 +128,41 @@ def process_pcapng(pcap_file, db_conn, gps_data=None):
 def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
     """Parse a packet and extract APs, clients, GPS latitude/longitude, WPS, and Extended Capabilities."""
     try:
-        # **Skip Broadcast MAC Address (`ff:ff:ff:ff:ff:ff`)**
+        # Skip Broadcast MAC Address (`ff:ff:ff:ff:ff:ff`)
         mac = getattr(packet[Dot11], 'addr2', '').lower()
         if mac == "ff:ff:ff:ff:ff:ff":
             return
 
-        # **Skip Non-802.11 Packets**
+        # Skip Non-802.11 Packets
         if not packet.haslayer(Dot11):
             return
 
         packet_length = len(packet)
         dbm_signal = getattr(packet[RadioTap], 'dBm_AntSignal', None) if packet.haslayer(RadioTap) else None
 
-        # **Determine 802.11 Frame Type and Subtype**
+        # Determine 802.11 Frame Type and Subtype
         frame_type = None
         dot11_layer = packet[Dot11]
 
-        if dot11_layer.type == 0:  # **Management Frames**
+        if dot11_layer.type == 0:  # Management Frames
             subtype_map = {
-                0: "assoc_req",
-                1: "assoc_resp",
-                2: "reassoc_req",
-                3: "reassoc_resp",
-                4: "probe_req",
-                5: "probe_resp",
-                8: "beacon",
-                10: "disas",
-                11: "auth",
-                12: "deauth"
+                0: "assoc_req", 1: "assoc_resp", 2: "reassoc_req", 3: "reassoc_resp",
+                4: "probe_req", 5: "probe_resp", 8: "beacon",
+                10: "disas", 11: "auth", 12: "deauth"
             }
             frame_type = subtype_map.get(dot11_layer.subtype, "mgmt_unknown")
 
-        elif dot11_layer.type == 1:  # **Control Frames**
+        elif dot11_layer.type == 1:  # Control Frames
             subtype_map = {
-                9: "block_ack",
-                10: "block_ack_req",
-                11: "rts",
-                12: "cts",
-                13: "ack",
-                14: "cf_end",
-                15: "cf_end_ack"
+                9: "block_ack", 10: "block_ack_req", 11: "rts",
+                12: "cts", 13: "ack", 14: "cf_end", 15: "cf_end_ack"
             }
             frame_type = subtype_map.get(dot11_layer.subtype, "ctrl_unknown")
 
-        elif dot11_layer.type == 2:  # **Data Frames**
+        elif dot11_layer.type == 2:  # Data Frames
             frame_type = "data"
 
-        # **Process Access Points**
+        # Process Access Points
         if frame_type in ["beacon", "probe_resp", "assoc_resp", "reassoc_resp"]:
             ssid = packet[Dot11Elt].info.decode(errors="ignore") if packet.haslayer(Dot11Elt) else ""
             stats = packet[Dot11Beacon].network_stats() if packet.haslayer(Dot11Beacon) else {}
@@ -184,7 +172,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
                 crypto = ", ".join(crypto)
             manufacturer = get_manufacturer(mac, oui_mapping)
 
-            # **Extract Extended Capabilities & WPS Info**
+            # Extract Extended Capabilities & WPS Info
             extended_capabilities = "No Extended Capabilities"
             wps_info = parse_wps_info(packet)
 
@@ -194,18 +182,18 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
                 except Exception as e:
                     logger.error(f"Failed to process extended capabilities: {e}")
 
-            # **Combine WPS Info & Extended Capabilities**
+            # Combine WPS Info & Extended Capabilities
             if wps_info:
                 extended_capabilities = (
                     f"{extended_capabilities}, {wps_info}" if extended_capabilities != "No Extended Capabilities" else wps_info
                 )
 
-            # **Ensure device is not classified as a client**
+            # Ensure device is not classified as a client
             if mac in device_dict and "associated_ap" in device_dict[mac]:
                 logger.warning(f"MAC {mac} was previously a client but is now an AP. Updating classification.")
                 del device_dict[mac]["associated_ap"]
 
-            # **Ensure AP Exists & Update Channel**
+            # Ensure AP Exists & Update Channel
             if mac not in device_dict:
                 device_dict[mac] = {
                     "mac": mac, "ssid": ssid, "encryption": crypto,
@@ -219,27 +207,27 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
 
             device_dict[mac]["frame_counts"][frame_type] = device_dict[mac]["frame_counts"].get(frame_type, 0) + 1
 
-        # **Process Clients**
+        # Process Clients
         elif frame_type in ["probe_req", "auth", "assoc_req", "reassoc_req", "data"]:
             associated_ap = getattr(packet[Dot11], "addr1", "").lower() if frame_type in ["auth", "assoc_req",
                                                                                           "reassoc_req"] else None
             manufacturer = get_manufacturer(mac, oui_mapping)
 
-            # **Extract SSID for Probe Requests & Association Requests**
+            # Extract SSID for Probe Requests & Association Requests
             ssid = ""
             if frame_type in ["probe_req", "assoc_req", "reassoc_req"] and packet.haslayer(Dot11Elt):
                 try:
                     ssid = packet[Dot11Elt].info.decode(errors="ignore")
-                except UnicodeDecodeError:  # More precise error handling
+                except UnicodeDecodeError:
                     ssid = "Unknown"
 
-            # **Ensure MAC was not previously classified as an AP**
+            # Ensure MAC was not previously classified as an AP
             if mac in device_dict and "frame_counts" in device_dict[mac] and (
                     "beacon" in device_dict[mac]["frame_counts"] or "probe_resp" in device_dict[mac]["frame_counts"]):
                 logger.warning(f"Skipping client entry for {mac}, already classified as an AP.")
                 return
 
-            # **Update Client Entry**
+            # Update Client Entry
             if mac not in device_dict:
                 device_dict[mac] = {
                     "mac": mac, "ssid": ssid, "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -254,19 +242,19 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
 
             device_dict[mac]["frame_counts"][frame_type] = device_dict[mac]["frame_counts"].get(frame_type, 0) + 1
 
-        # **Process EAPOL Frames Last (with Spoofing Check)**
+        # Process EAPOL Frames Last (with Spoofing Check)
         if packet.haslayer(EAPOL):
             eapol_source = getattr(packet, "addr2", "").lower()
             eapol_dest = getattr(packet, "addr1", "").lower()
 
-            # **Detect and Ignore Spoofed MACs in EAPOL**
+            # Detect and Ignore Spoofed MACs in EAPOL
             tx_flags = getattr(packet[RadioTap], "tx_flags", None) if packet.haslayer(RadioTap) and hasattr(packet[RadioTap], "tx_flags") else None
             is_spoofed = (tx_flags == 0x0018) and (dbm_signal is None or dbm_signal == -100)
             if is_spoofed:
                 logger.warning(f"Skipping spoofed EAPOL packet from {eapol_source} -> {eapol_dest} (TX Flag 0x0018 detected)")
                 return
 
-            # **Ensure EAPOL destination is not incorrectly classified as a client**
+            # Ensure EAPOL destination is not incorrectly classified as a client
             if eapol_dest in device_dict and "associated_ap" in device_dict[eapol_dest]:
                 del device_dict[eapol_dest]["associated_ap"]
 
@@ -282,7 +270,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
                 device_dict[eapol_source]["associated_ap"] = eapol_dest
                 device_dict[eapol_source]["frame_counts"]["eapol"] = device_dict[eapol_source]["frame_counts"].get("eapol", 0) + 1
 
-        # **Assign GPS Data if Available**
+        # Assign GPS Data if Available
         if gps_data and mac in device_dict:
             timestamp = packet.time
             closest_timestamp = min(gps_data.keys(), key=lambda t: abs(t - timestamp))
@@ -290,7 +278,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
             device_dict[mac]["latitude"] = latitude
             device_dict[mac]["longitude"] = longitude
 
-        # **Store in Database**
+        # Store in Database
         store_results_in_db(device_dict, db_conn)
 
     except Exception as e:
