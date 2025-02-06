@@ -11,8 +11,7 @@ from scapy.error import Scapy_Exception
 from scapy.layers.eap import EAPOL
 from scapy.utils import PcapReader
 from scapy.layers.dot11 import (
-    Dot11, Dot11Beacon, Dot11Auth, Dot11Elt, Dot11ProbeReq, Dot11AssoReq,
-    Dot11ProbeResp, RadioTap, Dot11Deauth, Dot11AssoResp, Dot11ReassoReq, Dot11ReassoResp, Dot11Disas, Dot11QoS
+    Dot11, Dot11Beacon, Dot11Elt, RadioTap,
 )
 
 from config.config import DEFAULT_OUI_PATH
@@ -231,7 +230,7 @@ def parse_packet(packet, device_dict, oui_mapping, db_conn, gps_data=None):
             if frame_type in ["probe_req", "assoc_req", "reassoc_req"] and packet.haslayer(Dot11Elt):
                 try:
                     ssid = packet[Dot11Elt].info.decode(errors="ignore")
-                except Exception:
+                except UnicodeDecodeError:  # More precise error handling
                     ssid = "Unknown"
 
             # **Ensure MAC was not previously classified as an AP**
